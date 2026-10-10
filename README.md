@@ -17,7 +17,7 @@ python -m spacy download en_core_web_lg
 # OPA binary (needed for the gate): downloaded to .tools/ during the build, or:
 #   curl -L -o .tools/opa.exe https://github.com/open-policy-agent/opa/releases/latest/download/opa_windows_amd64.exe
 
-pytest                                   # 64 tests, each mapped to a silent-failure fix
+pytest                                   # 89 tests, each mapped to a silent-failure fix
 python -m eval.run --configs A,B,C,D     # attack suite A-D + the gate-only-catches headline
 python scripts/seed_demo.py --local      # show the poisoned email being split and flagged
 ```
@@ -73,14 +73,31 @@ Two attacks a detector can miss and the gate still stops:
 5. **Safe output and audit.** Schema-constrained verdicts that must cite evidence IDs, quarantined attacker text in the UI, and an audit record for every decision.
 6. **Fail-closed watchdog.** Any error or timeout blocks T1–T3 actions and escalates them.
 
-The 24 silent-failure fixes from the project dossier (section 11) carry over unchanged.
+The 24 silent-failure fixes from the project dossier (section 11) carry over unchanged. v2.1 adds ten more, found in TrustGate's own code ([below](#v21-silent-failures-fixed-in-trustgate-itself)).
 
 | Tier | Tools | Checks before the action runs |
 |---|---|---|
 | T0 | `get_alert`, `query_logs`, `lookup_ioc`, `add_note`, `escalate`, `raise_severity`, `enrich` | Rate limit; floods become an IOC |
-| T1 | `close_alert`, `downgrade_severity`, `whitelist_indicator`, `suppress_rule` | Facts-only re-check agrees, cites typed facts, OPA allows |
+| T1 | `close_alert`, `downgrade_severity`, `whitelist_indicator`, `suppress_rule` | Facts-only re-check agrees, cites typed facts, evidence floor met (core facts known, no failed lookup, a fact the attacker cannot buy), bounded expiry for suppressions and allowlist entries, per-sender campaign limit, OPA allows |
 | T2 | `block_ip`, `isolate_host`, `disable_account` | Target is in the typed facts, not a critical asset, rate limit |
 | T3 | `send_email`, `post_webhook` | Recipient or URL on the allowlist, no raw evidence, output scan |
+
+### v2.1: silent failures fixed in TrustGate itself
+
+Each was a way for an attack to get through, or for the gate to stop working, without anything flagging it. Tests: `tests/test_silent_failures_v21.py`.
+
+| # | Silent failure | Fix | Where |
+|---|---|---|---|
+| 1 | An attacker who owns a domain passes SPF/DKIM/DMARC, buys an aged domain and links to a clean file-sharing site; the facts-only re-check says benign and a T1 close runs | **Attacker-cost evidence floor.** For email, a T1 action also needs a fact a fresh campaign cannot buy: the sender has delivered mail before (`facts.sender_prior_messages >= 3`, from MTA/SIEM history) | `trustgate/evidence_floor.py`, `packs/floor.json`, `packs/floor.rego` |
+| 2 | A failed threat-intel lookup (429, outage, rejected key) was swallowed; facts stayed "unknown" and only the re-check prompt stood between that and "benign" | Failed lookups are recorded (`facts.enrichment_failed`); T1 needs no failed lookup and its core facts known per source, enforced in code and in Rego | `trustgate/ingest/enrich.py`, `trustgate/evidence_floor.py` |
+| 3 | An analyst approval ran the original arguments with no re-check and no time limit | Approvals are re-checked when used: expiry (`TRUSTGATE_ESCALATION_TTL_S`, default 4 h), tool tier and MCP pin unchanged, a second, different analyst for T2/T3, and T3 payloads re-scanned (floor-blocked data never leaves; redactions apply) | `Gate.resolve_escalation` |
+| 4 | MCP tool *results* reached the agent unlabelled and unscanned | The gateway wraps every text result in a random delimiter as untrusted data and scans it; a hit warns the agent, audits `mcp_output` and tags the alert as an AI-evasion attempt, which blocks T1 on it | `trustgate/mcp/gateway.py` |
+| 5 | A pinned MCP server could change what it returns while keeping its description | The first successful response sets a baseline shape; new content types or structured keys withhold the response and disable the tool until re-pinned | `trustgate/mcp/pinning.py` |
+| 6 | Timed-out checks kept running and could fill the worker pool, after which every decision waited out its own timeout | Bounded in-flight checks: a saturated gate fails closed at once ("GateSaturated"); `health()` and `/healthz` report in-flight and abandoned checks | `Gate._run_with_watchdog` |
+| 7 | `suppress_rule` and `whitelist_indicator` change every future alert, justified by one alert's facts | They need `ttl_hours` in (0, 24]; the mock SOC records `expires_at`. Floor rule: a persistent T1 change needs a bounded expiry | `packs/*.json` `expiring_tools`, `Gate._expiry_scope` |
+| 8 | Rate limits were per tool, so a campaign of individually clean-looking emails was judged one at a time | T1 actions are also limited per sender domain (10 per hour by default). Shared mail providers (gmail.com, outlook.com, ...) are exempt; fresh senders there are caught per address by fix 1 | `packs/*.json` `campaign_rate_limits` |
+| 9 | Notes the agent wrote after reading manipulated evidence were stored as plain text | Agent-written notes on a flagged alert are stored with an untrusted-provenance prefix naming the flagged evidence | `Gate._t0` |
+| 10 | Monitor mode logged "would block" but gave no way to tell when enforcing was safe | Per-tool rollout report: decisions, would-block rate, fail-closed count, top reasons, ready flag (`GET /v1/rollout`, dashboard Metrics tab) | `Store.rollout_report` |
 
 ### What v2 adds
 
@@ -273,6 +290,8 @@ URLHAUS_AUTH_KEY=
 
 # Gate
 TRUSTGATE_MODE=enforce        # enforce | monitor
+TRUSTGATE_MAX_INFLIGHT_CHECKS=16
+TRUSTGATE_ESCALATION_TTL_S=14400
 TRUSTGATE_POLICY=packs/soc.rego
 OLLAMA_HOST=http://host.docker.internal:11434
 OPA_URL=http://opa:8181
@@ -318,7 +337,7 @@ TrustGate/
 ├── examples/email_assistant.py    # second agent protected in a few lines
 ├── eval/                          # payloads, inject, build_attachments, generate_alerts, configs, sim, metrics, run
 ├── scripts/                       # init_secrets, seed_demo, train_recheck, check_model_pins, ci_eval_guard
-├── tests/                         # 64 tests, each mapped to a silent-failure fix
+├── tests/                         # 89 tests, each mapped to a silent-failure fix
 ├── .tools/opa.exe                 # OPA binary (git-ignored)
 ├── DISCLOSURE.md · PLACEHOLDERS.md · README.md
 ```
@@ -451,6 +470,7 @@ Cut order when time runs short (first to go at the top):
 - The facts-only verdict is less accurate than the full-context one, so expect more escalations. The escalation rate is always reported next to accuracy.
 - A tool-boundary gate cannot see how the model turned untrusted text into an innocent-looking argument; value-matching on T2 and T3 targets is the mitigation, stated as a limit.
 - Never quote a language count, latency or accuracy figure that has not been measured.
+- The attacker-cost floor needs sender history (`sender_prior_messages`) from the MTA or SIEM. Without it, every email T1 action escalates; a compromised account with real history still passes it (the detection problem above).
 
 ---
 

@@ -51,6 +51,7 @@ tab_queue, tab_metrics, tab_audit, tab_pins = st.tabs(["Escalation queue", "Metr
 with tab_queue:
     st.subheader("Open escalations")
     analyst = st.text_input("Analyst", value="analyst@corp.example")
+    second = st.text_input("Second analyst (required to approve T2/T3)", value="")
     items = proxy_get("/v1/escalations?status=open") or []
     if not items:
         st.info("No open escalations.")
@@ -65,9 +66,13 @@ with tab_queue:
             reason = st.text_input("Decision reason", key=f"r-{esc['id']}")
             c1, c2 = st.columns(2)
             if c1.button("Approve", key=f"a-{esc['id']}"):
-                httpx.post(f"{PROXY}/v1/escalations/{esc['id']}/approve",
-                           json={"analyst": analyst, "reason": reason}, timeout=10)
-                st.rerun()
+                resp = httpx.post(f"{PROXY}/v1/escalations/{esc['id']}/approve",
+                                  json={"analyst": analyst, "reason": reason, "second_analyst": second or None},
+                                  timeout=10)
+                if resp.status_code == 409:
+                    st.error(resp.json().get("detail", "approval refused"))
+                else:
+                    st.rerun()
             if c2.button("Reject", key=f"x-{esc['id']}"):
                 httpx.post(f"{PROXY}/v1/escalations/{esc['id']}/reject",
                            json={"analyst": analyst, "reason": reason}, timeout=10)
@@ -90,6 +95,11 @@ with tab_metrics:
         cols2[1].metric("AI-evasion alerts", metrics["ai_evasion_alerts"])
         cols2[2].metric("Min label coverage", metrics.get("label_coverage_min"))
         cols2[3].metric("Would-block (monitor)", metrics["would_block_monitor"])
+        rollout = proxy_get("/v1/rollout")
+        if rollout and rollout["tools"]:
+            st.subheader("Monitor-mode rollout readiness")
+            st.caption(rollout["criteria"])
+            st.dataframe(pd.DataFrame(rollout["tools"]))
     st.caption("Full evaluation numbers (ASR@k, gate-only catches): run `python -m eval.run` and load eval/results/summary.json.")
     uploaded = st.file_uploader("Load an eval summary.json", type="json")
     if uploaded:

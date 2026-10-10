@@ -75,7 +75,32 @@
           "summary"
         ]
       },
-      "summary_tools": []
+      "summary_tools": [],
+      "expiring_tools": {
+        "add_safe_sender": {
+          "ttl_arg": "ttl_hours",
+          "max_hours": 24
+        },
+        "create_forwarding_rule": {
+          "ttl_arg": "ttl_hours",
+          "max_hours": 24
+        }
+      },
+      "campaign_rate_limits": {
+        "window_s": 3600,
+        "1": 10,
+        "shared_domains": [
+          "gmail.com",
+          "googlemail.com",
+          "outlook.com",
+          "hotmail.com",
+          "live.com",
+          "yahoo.com",
+          "icloud.com",
+          "proton.me",
+          "protonmail.com"
+        ]
+      }
     }
   }
 }

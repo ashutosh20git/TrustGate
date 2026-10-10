@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from services.mock_soc.client import MockSOCClient
 from services.soc_tools import register_soc_tools, soc_tool_functions
 from trustgate.config import NotConfigured, Settings
-from trustgate.gate import ESCALATED_MESSAGE, Gate, ToolConfigError
+from trustgate.gate import ESCALATED_MESSAGE, ApprovalRefused, Gate, ToolConfigError
 from trustgate.ingest.enrich import ThreatIntel
 from trustgate.mcp.pinning import ToolPinRegistry
 from trustgate.models import GateDecision, ProposedAction
@@ -32,6 +32,7 @@ CANARY_RATE = 0.1  # share of the queue that is planted known-bad items (silent 
 class AnalystDecision(BaseModel):
     analyst: str
     reason: str
+    second_analyst: str | None = None  # required to approve T2/T3 actions
 
 
 class RepinRequest(BaseModel):
@@ -112,9 +113,12 @@ def create_app(gate: Gate | None = None, settings: Settings | None = None) -> Fa
         if verdict not in ("approve", "reject"):
             raise HTTPException(404)
         try:
-            return gate.resolve_escalation(esc_id, approve=verdict == "approve", analyst=body.analyst, reason=body.reason)
+            return gate.resolve_escalation(esc_id, approve=verdict == "approve", analyst=body.analyst,
+                                           reason=body.reason, second_analyst=body.second_analyst)
         except KeyError:
             raise HTTPException(404, "no open escalation with that id") from None
+        except ApprovalRefused as exc:
+            raise HTTPException(409, f"approval refused: {exc}") from None
         except (ToolConfigError, NotConfigured) as exc:
             raise HTTPException(503, f"executor unavailable: {type(exc).__name__}") from None
 
@@ -159,6 +163,11 @@ def create_app(gate: Gate | None = None, settings: Settings | None = None) -> Fa
             "pack": gate.pack.name,
         }
 
+    @app.get("/v1/rollout")
+    def rollout(min_samples: int = 50) -> dict[str, Any]:
+        """Monitor-mode readiness: what enforcing would have blocked, per tool."""
+        return store.rollout_report(min_samples=min_samples)
+
     @app.get("/v1/mcp/pins")
     def list_pins() -> list[dict[str, Any]]:
         return [p.model_dump(mode="json") for p in store.pins()]
@@ -173,8 +182,9 @@ def create_app(gate: Gate | None = None, settings: Settings | None = None) -> Fa
     @app.get("/healthz")
     def healthz():
         checks = gate.health()
-        healthy = checks.get("policy") is True and checks.get("rate_limiter") is True
-        checks["t1_t3"] = "ok" if healthy else "fail closed: dependencies down"
+        healthy = (checks.get("policy") is True and checks.get("rate_limiter") is True
+                   and not checks.get("saturated"))
+        checks["t1_t3"] = "ok" if healthy else "fail closed: dependencies down or gate saturated"
         return JSONResponse(checks, status_code=200 if healthy else 503)
 
     return app

@@ -39,11 +39,13 @@ class MockSOCClient:
     def escalate(self, alert_id: str, reason: str) -> dict:
         return self._post("/tickets/escalate", {"alert_id": alert_id, "reason": reason})
 
-    def suppress_rule(self, alert_id: str, rule: str, reason: str) -> dict:
-        return self._post("/rules/suppress", {"alert_id": alert_id, "rule": rule, "reason": reason})
+    def suppress_rule(self, alert_id: str, rule: str, reason: str, ttl_hours: float | None = None) -> dict:
+        return self._post("/rules/suppress", {"alert_id": alert_id, "rule": rule, "reason": reason,
+                                              "ttl_hours": ttl_hours})
 
-    def whitelist_indicator(self, alert_id: str, indicator: str, reason: str) -> dict:
-        return self._post("/whitelist/add", {"alert_id": alert_id, "indicator": indicator, "reason": reason})
+    def whitelist_indicator(self, alert_id: str, indicator: str, reason: str, ttl_hours: float | None = None) -> dict:
+        return self._post("/whitelist/add", {"alert_id": alert_id, "indicator": indicator, "reason": reason,
+                                             "ttl_hours": ttl_hours})
 
     def block_ip(self, alert_id: str, ip: str) -> dict:
         return self._post("/firewall/block", {"alert_id": alert_id, "ip": ip})

@@ -17,7 +17,7 @@ WINDOW_S = 60
 
 
 class RateLimiter(Protocol):
-    def hit(self, bucket: str, limit: int) -> bool:
+    def hit(self, bucket: str, limit: int, window_s: int = WINDOW_S) -> bool:
         """Count one action in bucket; True if still within limit for this window."""
 
 
@@ -31,12 +31,12 @@ class RedisRateLimiter:
             client = redis.Redis.from_url(url, socket_timeout=2, socket_connect_timeout=2)
         self._redis = client
 
-    def hit(self, bucket: str, limit: int) -> bool:
-        window = int(time.time() // WINDOW_S)
-        key = f"tg:rl:{bucket}:{window}"
+    def hit(self, bucket: str, limit: int, window_s: int = WINDOW_S) -> bool:
+        window = int(time.time() // window_s)
+        key = f"tg:rl:{bucket}:{window_s}:{window}"
         pipe = self._redis.pipeline()
         pipe.incr(key)
-        pipe.expire(key, WINDOW_S * 2)
+        pipe.expire(key, window_s * 2)
         count, _ = pipe.execute()
         return int(count) <= limit
 
@@ -48,8 +48,8 @@ class MemoryRateLimiter:
         self._counts: dict[str, int] = defaultdict(int)
         self._lock = threading.Lock()
 
-    def hit(self, bucket: str, limit: int) -> bool:
-        key = f"{bucket}:{int(time.time() // WINDOW_S)}"
+    def hit(self, bucket: str, limit: int, window_s: int = WINDOW_S) -> bool:
+        key = f"{bucket}:{window_s}:{int(time.time() // window_s)}"
         with self._lock:
             self._counts[key] += 1
             return self._counts[key] <= limit
@@ -59,7 +59,7 @@ class UnavailableRateLimiter:
     def __init__(self, error: Exception):
         self._error = error
 
-    def hit(self, bucket: str, limit: int) -> bool:
+    def hit(self, bucket: str, limit: int, window_s: int = WINDOW_S) -> bool:
         raise self._error
 
 

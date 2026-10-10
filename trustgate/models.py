@@ -57,6 +57,25 @@ class TypedFacts(BaseModel):
     attachment_parse_failed: bool = False
     attachment_hidden_content: bool = False
     attachment_has_macros: bool = False
+    # How many messages this exact sender delivered to the organisation before
+    # this one (MTA/SIEM history). Unlike SPF/DKIM/DMARC, domain age or a clean
+    # URL, an attacker cannot buy this cheaply for a fresh campaign.
+    sender_prior_messages: int | None = Field(None, ge=0)
+    # Sender domain from the parsed email, used only as a campaign rate-limit key.
+    sender_domain: str | None = None
+    # True when a threat-intel lookup errored (not merely unconfigured): the
+    # facts it would have produced are missing, not clean.
+    enrichment_failed: bool = False
+
+    @field_validator("sender_domain")
+    @classmethod
+    def _domain_is_hostname(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip().lower()
+        if not _HOSTNAME.match(v):
+            raise ValueError(f"invalid sender domain in typed facts: {v[:40]!r}")
+        return v
 
     @field_validator("ioc_hashes")
     @classmethod
@@ -102,6 +121,8 @@ class TypedFacts(BaseModel):
             "attachment_parse_failed": self.attachment_parse_failed,
             "attachment_hidden_content": self.attachment_hidden_content,
             "attachment_has_macros": self.attachment_has_macros,
+            "sender_prior_messages": self.sender_prior_messages,
+            "enrichment_failed": self.enrichment_failed,
         }
 
     def target_values(self, fact: str) -> set[str]:
@@ -171,6 +192,15 @@ class Alert(BaseModel):
 
     def evidence_by_id(self) -> dict[str, Evidence]:
         return {e.id: e for e in self.evidence}
+
+    def flag_ai_evasion(self, signal: IOCSignal) -> bool:
+        """Record an injection IOC found after ingest (e.g. in a tool result). True if newly tagged."""
+        self.ioc_signals.append(signal)
+        if self.ai_evasion_attempt:
+            return False
+        self.tags.append("AI-evasion attempt")
+        self.severity = SEVERITY_ORDER[min(len(SEVERITY_ORDER) - 1, SEVERITY_ORDER.index(self.severity) + 1)]
+        return True
 
 
 class ProposedAction(BaseModel):

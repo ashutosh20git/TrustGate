@@ -60,6 +60,16 @@ class PolicyPack:
     def outbound_spec(self, tool: str) -> dict[str, Any] | None:
         return self._spec("outbound", tool)
 
+    def expiry_spec(self, tool: str) -> dict[str, Any] | None:
+        """T1 tools whose effect outlives the alert: {"ttl_arg": ..., "max_hours": ...}."""
+        return self._spec("expiring_tools", tool)
+
+    def campaign_limit(self, tier: Tier) -> tuple[int, int] | None:
+        """(limit, window_s) for actions per sender domain, or None."""
+        spec = self.data.get("campaign_rate_limits", {})
+        limit = spec.get(str(int(tier)))
+        return None if limit is None else (int(limit), int(spec.get("window_s", 3600)))
+
     @property
     def critical_assets(self) -> set[str]:
         return {str(v).lower() for v in self.data.get("critical_assets", [])}
@@ -72,6 +82,12 @@ class PolicyPack:
         pack_limit = int(self.data.get("rate_limits", {}).get(str(int(tier)), 60))
         floor_limit = int(self.floor.get("min_rate_limits", {}).get(str(int(tier)), pack_limit))
         return min(pack_limit, floor_limit)  # the floor caps how generous a pack can be
+
+    @property
+    def shared_sender_domains(self) -> set[str]:
+        """Mail providers many unrelated senders share; a per-domain campaign key would throttle all of them.
+        Fresh senders there are still caught per address by the attacker-cost floor."""
+        return {str(v).lower() for v in self.data.get("campaign_rate_limits", {}).get("shared_domains", [])}
 
     @property
     def detector_sender_allowlist(self) -> set[str]:

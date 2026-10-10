@@ -69,7 +69,8 @@ def _email_alert(i: int, rng: random.Random, malicious: bool, authserv: str) -> 
         "source": "email",
         "severity": "high" if malicious else "low",
         "rule_name": "phishing_reported" if malicious else "mail_flagged",
-        "observed": {"ioc_ips": ioc_ips},
+        # MTA history: established senders have delivered mail before; phishing senders have not.
+        "observed": {"ioc_ips": ioc_ips, "sender_prior_messages": 0 if malicious else rng.randint(5, 400)},
         "enrichment": {"sender_domain_age_days": age,
                        "url_reputation": "malicious" if malicious else "clean",
                        "sandbox_verdict": "not_run"},

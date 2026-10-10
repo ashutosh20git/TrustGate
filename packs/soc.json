@@ -120,7 +120,32 @@
       "summary_tools": [
         "add_note",
         "mock-soc/add_note"
-      ]
+      ],
+      "expiring_tools": {
+        "suppress_rule": {
+          "ttl_arg": "ttl_hours",
+          "max_hours": 24
+        },
+        "whitelist_indicator": {
+          "ttl_arg": "ttl_hours",
+          "max_hours": 24
+        }
+      },
+      "campaign_rate_limits": {
+        "window_s": 3600,
+        "1": 10,
+        "shared_domains": [
+          "gmail.com",
+          "googlemail.com",
+          "outlook.com",
+          "hotmail.com",
+          "live.com",
+          "yahoo.com",
+          "icloud.com",
+          "proton.me",
+          "protonmail.com"
+        ]
+      }
     }
   }
 }

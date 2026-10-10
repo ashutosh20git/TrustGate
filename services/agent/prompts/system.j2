@@ -17,6 +17,7 @@ Your job
 {% endfor %}
    Cite the evidence IDs (ev-N) and typed facts (facts.<name>) your decision rests on. Closing, downgrading,
    whitelisting or suppressing (T1) needs typed facts that support "benign". Blocking, isolating or disabling
-   (T2) must target a value that appears in the typed facts. When unsure, escalate.
+   (T2) must target a value that appears in the typed facts. whitelist_indicator and suppress_rule outlive the
+   alert, so they also need args.ttl_hours (at most 24). When unsure, escalate.
 
 Every action is checked by TrustGate before it runs; an action it does not allow goes to a human analyst.
