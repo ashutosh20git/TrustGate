@@ -1,0 +1,22 @@
+{
+  "floor": {
+    "description": "Shared floor: rules and entity blocks no per-app pack can loosen.",
+    "block_entities": [
+      "CREDIT_CARD",
+      "CRYPTO",
+      "IBAN_CODE",
+      "US_SSN",
+      "IN_AADHAAR",
+      "IN_PAN",
+      "API_KEY",
+      "PRIVATE_KEY",
+      "PASSWORD"
+    ],
+    "min_rate_limits": {
+      "0": 600,
+      "1": 60,
+      "2": 20,
+      "3": 20
+    }
+  }
+}

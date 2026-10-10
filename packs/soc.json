@@ -1,0 +1,126 @@
+{
+  "packs": {
+    "soc": {
+      "description": "AI SOC triage agent. Placeholder asset and allowlist values: replace with the real environment's (see PLACEHOLDERS.md).",
+      "tools": {
+        "get_alert": 0,
+        "query_logs": 0,
+        "lookup_ioc": 0,
+        "add_note": 0,
+        "escalate": 0,
+        "raise_severity": 0,
+        "enrich": 0,
+        "close_alert": 1,
+        "downgrade_severity": 1,
+        "whitelist_indicator": 1,
+        "suppress_rule": 1,
+        "block_ip": 2,
+        "isolate_host": 2,
+        "disable_account": 2,
+        "send_email": 3,
+        "post_webhook": 3,
+        "mock-soc/get_alert": 0,
+        "mock-soc/query_logs": 0,
+        "mock-soc/add_note": 0,
+        "mock-soc/escalate": 0,
+        "mock-soc/close_alert": 1,
+        "mock-soc/downgrade_severity": 1,
+        "mock-soc/whitelist_indicator": 1,
+        "mock-soc/suppress_rule": 1,
+        "mock-soc/block_ip": 2,
+        "mock-soc/isolate_host": 2,
+        "mock-soc/disable_account": 2,
+        "mock-soc/send_email": 3,
+        "mock-soc/post_webhook": 3
+      },
+      "targets": {
+        "block_ip": {
+          "arg": "ip",
+          "fact": "ioc_ips"
+        },
+        "isolate_host": {
+          "arg": "host",
+          "fact": "hosts"
+        },
+        "disable_account": {
+          "arg": "account",
+          "fact": "accounts"
+        }
+      },
+      "outbound": {
+        "send_email": {
+          "recipient_arg": "to",
+          "body_args": [
+            "subject",
+            "body"
+          ]
+        },
+        "post_webhook": {
+          "recipient_arg": "url",
+          "body_args": [
+            "payload"
+          ]
+        }
+      },
+      "critical_assets": [
+        "10.0.0.10",
+        "dc01.corp.example",
+        "ceo-laptop.corp.example",
+        "administrator",
+        "ceo"
+      ],
+      "allowlist": [
+        "soc-team@corp.example",
+        "ir-oncall@corp.example",
+        "https://hooks.corp.example/soc"
+      ],
+      "output_scan": {
+        "allow_entities": [
+          "IP_ADDRESS",
+          "URL",
+          "DOMAIN_NAME",
+          "DATE_TIME",
+          "NRP",
+          "LOCATION"
+        ],
+        "redact_entities": [
+          "EMAIL_ADDRESS",
+          "PHONE_NUMBER",
+          "PERSON",
+          "US_DRIVER_LICENSE",
+          "US_PASSPORT"
+        ],
+        "block_entities": [
+          "MEDICAL_LICENSE"
+        ]
+      },
+      "rate_limits": {
+        "0": 120,
+        "1": 30,
+        "2": 10,
+        "3": 10
+      },
+      "detector": {
+        "sender_allowlist": []
+      },
+      "agent_text": {
+        "add_note": [
+          "text"
+        ],
+        "mock-soc/add_note": [
+          "text"
+        ],
+        "escalate": [
+          "reason"
+        ],
+        "mock-soc/escalate": [
+          "reason"
+        ]
+      },
+      "summary_tools": [
+        "add_note",
+        "mock-soc/add_note"
+      ]
+    }
+  }
+}

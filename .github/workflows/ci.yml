@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install OPA
+        run: |
+          curl -L -o /usr/local/bin/opa https://github.com/open-policy-agent/opa/releases/latest/download/opa_linux_amd64_static
+          chmod +x /usr/local/bin/opa
+          mkdir -p .tools && cp /usr/local/bin/opa .tools/opa
+
+      - name: Check Rego policies
+        run: opa check packs/
+
+      - name: Install
+        run: |
+          python -m pip install -U pip
+          pip install ".[ingest,attachments,output-scan,recheck-xgb,mcp,server,eval,dev]"
+          python -m spacy download en_core_web_lg
+
+      - name: Model pin check (no unpinned LiteLLM model)
+        run: python scripts/check_model_pins.py
+
+      - name: Tests
+        run: pytest -q
+
+      - name: Eval smoke (offline simulator) + regression guard
+        run: python scripts/ci_eval_guard.py

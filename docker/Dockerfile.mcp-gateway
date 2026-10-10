@@ -1,0 +1,21 @@
+# MCP gateway image (v2 packaging): a proxy in front of any MCP server, with
+# tool pinning. Runs the gateway, which spawns the upstream MCP server as a child.
+#
+#   docker build -f docker/Dockerfile.mcp-gateway -t trustgate-mcp-gateway .
+#   docker run -i --rm --env-file .env trustgate-mcp-gateway \
+#       --server-name mock-soc --policy packs/soc.rego -- python -m services.mock_soc.mcp_server
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml README.md ./
+COPY trustgate ./trustgate
+RUN pip install ".[mcp,server,output-scan]" && python -m spacy download en_core_web_lg
+
+COPY . .
+
+ENTRYPOINT ["python", "-m", "trustgate.mcp.gateway"]

@@ -1,0 +1,471 @@
+# TrustGate v2
+
+**A deterministic action gate for AI SOC agents.** TrustGate sits between an AI agent and its tools and only lets a security-reducing action through when evidence the attacker cannot write supports it.
+
+> "Untrusted text can raise suspicion but never lower it. TrustGate makes every security-reducing action prove itself on evidence the attacker can't write."
+
+Mitigata CyberForge 2026 · Team: Ashutosh Neelesh Dubey + teammate · Build window: Sat 31 Oct 2026, 10:00 → Sun 1 Nov 2026, 23:59 IST (about 38 hours)
+
+> **Status: built.** The v1 engine, all four v2 must-haves, the two "Should" items, the library, the MCP gateway, the services, the evaluation harness and the test suite are implemented. It runs **fully offline today** (`pytest`, `python -m eval.run`) using the bundled OPA binary and deterministic stand-ins. Running it **live** (real agent, real re-check model, Docker stack) needs the keys and services in [requirements from the team](#requirements-from-the-team); each one is a tracked placeholder that fails closed until filled — see [`PLACEHOLDERS.md`](PLACEHOLDERS.md).
+
+## Quickstart (offline, no keys)
+
+```bash
+python -m venv .venv && . .venv/Scripts/activate     # Windows; use bin/activate on POSIX
+pip install -e ".[ingest,attachments,output-scan,recheck-xgb,mcp,server,eval,dev]"
+python -m spacy download en_core_web_lg
+# OPA binary (needed for the gate): downloaded to .tools/ during the build, or:
+#   curl -L -o .tools/opa.exe https://github.com/open-policy-agent/opa/releases/latest/download/opa_windows_amd64.exe
+
+pytest                                   # 64 tests, each mapped to a silent-failure fix
+python -m eval.run --configs A,B,C,D     # attack suite A-D + the gate-only-catches headline
+python scripts/seed_demo.py --local      # show the poisoned email being split and flagged
+```
+
+---
+
+## Contents
+
+- [Positioning](#positioning-the-action-layer-detectors-lack)
+- [What is in v2](#what-is-in-v2)
+- [Architecture](#architecture)
+- [Packaging](#packaging)
+- [Quickstart (offline)](#quickstart-offline-no-keys)
+- [Requirements from the team](#requirements-from-the-team)
+- [Configuration (.env)](#configuration-env)
+- [Repository layout](#repository-layout)
+- [Running it live](#running-it-live-docker-stack)
+- [Evaluation v2](#evaluation-v2)
+- [Build plan and cut order](#build-plan-and-cut-order)
+- [What we deliberately do not build](#what-we-deliberately-do-not-build)
+- [Honest limits](#honest-limits)
+- [Disclosure](#disclosure)
+- [Sources](#sources)
+
+---
+
+## Positioning: the action layer detectors lack
+
+Detectors ask whether text looks malicious. TrustGate asks whether an action is justified by evidence the attacker cannot write. The two stack: a detector score is one input to the gate, never the boundary.
+
+| | Text detectors (Lakera Guard, Model Armor, Prompt Guard 2) | TrustGate |
+|---|---|---|
+| What it checks | Text going in and out of the model | Each tool call, and where its justification came from |
+| How it fails | Adaptive rephrasing: 12 published defences were bypassed, most at over 90% | Attacks that stay inside authorised actions; a compromised account whose facts look clean |
+| Where it is stronger | Breadth (PII, toxicity, URLs), 100+ languages, under 50 ms claimed, 80M+ attack prompts | Deterministic decisions, SOC-aware policy, every block explained with the text that caused it |
+| Role in TrustGate | One input signal (the IOC detector) | The security boundary |
+
+Two attacks a detector can miss and the gate still stops:
+
+- **Fake trusted data.** Spoofed metadata or fake tool-call blocks contain no instruction-like words. Llama Prompt Guard 2 caught none of 108 such payloads in the Agent Data Injection study.
+- **Persuasion without commands.** An email that simply argues it is harmless looks clean to a classifier. The facts-only re-check still disagrees with a "benign" verdict when DMARC fails or the sandbox flags the attachment.
+
+---
+
+## What is in v2
+
+### The v1 engine (unchanged)
+
+1. **Evidence splitter.** Deterministic parsers turn each alert into typed facts (enums, numbers, booleans) and quarantined free text. Anything unlabelled counts as untrusted.
+2. **Action tiers.** A static map: T0 always allowed, T1 security-reducing, T2 disruptive, T3 outbound. No model writes policy at runtime.
+3. **Facts-only re-check.** Before any T1 action, the verdict is recomputed from typed facts alone. Disagreement means the attacker's text tipped the decision, so the action escalates.
+4. **Injection-as-IOC.** Text aimed at an AI raises severity and is tagged "AI-evasion attempt". It is a signal, not the boundary.
+5. **Safe output and audit.** Schema-constrained verdicts that must cite evidence IDs, quarantined attacker text in the UI, and an audit record for every decision.
+6. **Fail-closed watchdog.** Any error or timeout blocks T1–T3 actions and escalates them.
+
+The 24 silent-failure fixes from the project dossier (section 11) carry over unchanged.
+
+| Tier | Tools | Checks before the action runs |
+|---|---|---|
+| T0 | `get_alert`, `query_logs`, `lookup_ioc`, `add_note`, `escalate`, `raise_severity`, `enrich` | Rate limit; floods become an IOC |
+| T1 | `close_alert`, `downgrade_severity`, `whitelist_indicator`, `suppress_rule` | Facts-only re-check agrees, cites typed facts, OPA allows |
+| T2 | `block_ip`, `isolate_host`, `disable_account` | Target is in the typed facts, not a critical asset, rate limit |
+| T3 | `send_email`, `post_webhook` | Recipient or URL on the allowlist, no raw evidence, output scan |
+
+### What v2 adds
+
+| Feature | Gap it closes | How (libraries) | Effort (h) | Owner | Priority |
+|---|---|---|---|---|---|
+| Monitor-only mode | No gradual rollout; Model Armor has an inspect-only mode | Config flag: the gate logs "would block" decisions without blocking | 2 | B | **Must** |
+| MCP tool pinning + description scan | No supply-chain checks (tool poisoning, rug pulls, shadowing) | SHA-256 of each tool description at registration (`hashlib`); descriptions scanned by the IOC detector; a changed hash disables the tool | 3 | A | **Must** |
+| Output data-leak scanning | No output scanning; Lakera and Model Armor redact sensitive data | Microsoft Presidio analyzer + anonymizer on agent text and T3 payloads (LLM Guard output scanners as fallback) | 3 | B | **Must** |
+| PDF and Office attachments | Text only; Model Armor screens PDF, Word, Excel, PowerPoint | PyMuPDF, python-docx, openpyxl, python-pptx → evidence items through the same splitter | 3 | A | **Must** |
+| Per-app policy packs | One policy; Model Armor has per-app templates and floor settings | One OPA data document per app; SOC pack + one generic pack; shared floor rules | 3 | B | Should |
+| Broader detector signals | Narrow threat coverage | LLM Guard input scanners for secrets, toxicity, URLs, as signals only | 2 | B | Should |
+| Hindi and Hinglish payloads | Languages untested | 20+ payloads in the attack suite; a multilingual classifier if time allows | 2 | A | Should |
+| SIEM export | No SIEM feed | JSON-lines audit stream to Wazuh or Splunk HTTP Event Collector | 1 | B | Could |
+| Lakera as a baseline | Comparison credibility | Add as a configuration if API access is available | 2 | A | Could |
+| Image OCR | Images unscreened | Tesseract via pytesseract → evidence items | 3 | A | Stretch |
+
+Owners: **A** = agent and evaluation, **B** = gate and UI.
+
+---
+
+## Architecture
+
+Attachments and MCP tool descriptions enter through the same trust labels as alert text. Monitor-only mode and policy packs change how the gate is deployed, not what it decides; the output scanner checks what leaves. New v2 parts are highlighted.
+
+```mermaid
+flowchart TB
+    alerts["Alerts and emails<br/>SIEM alerts · phishing emails"]
+    attach["PDF and Office attachments<br/>PyMuPDF · python-docx · openpyxl · python-pptx"]:::new
+    mcpdesc["MCP tool descriptions<br/>from connected MCP servers"]
+
+    splitter["Evidence splitter<br/>typed facts (trusted) · quarantined text (untrusted)"]
+    pinning["Tool pinning + scan<br/>SHA-256 pins · description scan"]:::new
+    detector["Detector signals<br/>Prompt Guard 2 · LLM Guard · regex → severity only"]
+    agent["SOC agent (LLM)<br/>LangGraph · LiteLLM · proposes verdict + action"]
+
+    subgraph gate["TrustGate gate: deterministic code"]
+        direction LR
+        tiers["Tiers T0–T3<br/>static tool map"] --> recheck["Facts re-check<br/>typed facts only"]
+        recheck --> vmatch["Value-match<br/>T2 and T3 targets"]
+        vmatch --> packs["Policy packs<br/>OPA · SOC + generic"]:::new
+        monitor["Monitor-only mode<br/>logs would-block decisions"]:::new
+        watchdog["Fail-closed watchdog<br/>any error or timeout escalates"]
+    end
+
+    outscan["Output scanner<br/>Presidio on agent text and outbound payloads"]:::new
+    execute["Execute<br/>allowed · mock SOC tools"]
+    escalate["Escalate<br/>analyst queue with spans"]
+    audit["Audit + SIEM export<br/>SQLModel · JSON lines"]
+
+    alerts --> splitter
+    attach --> splitter
+    mcpdesc --> pinning
+    splitter --> detector --> agent
+    agent -- "proposed action" --> gate
+    pinning -- "pinned tools only" --> gate
+    gate --> outscan
+    outscan --> execute
+    outscan --> escalate
+    outscan --> audit
+
+    classDef new fill:#e3ecfa,stroke:#2f6fd6,stroke-width:2px;
+```
+
+### One request, ten steps
+
+| Step | What happens | Tech |
+|---|---|---|
+| 1. Alert in | Raw alert posted to the ingest API | FastAPI `POST /v1/alerts` |
+| 2. Decode | NFKC, zero-width strip, base64/URL decode, hidden-HTML extraction, length caps | `unicodedata`, `base64`, `urllib.parse`, BeautifulSoup4 |
+| 3. Parse | Email auth results, domain facts, attachments | mail-parser, dkimpy, pyspf, checkdmarc, tldextract, python-whois, PyMuPDF, python-docx, openpyxl, python-pptx |
+| 4. Enrich | Threat-intel scores and enums only, cached | httpx, tenacity, diskcache |
+| 5. Split + label | Typed facts vs quarantined text with random per-request delimiters | Pydantic v2, `secrets.token_hex` |
+| 6. IOC scan | Whole assembled text, including stitched fragments | Prompt Guard 2, LLM Guard, regex |
+| 7. Agent proposes | Verdict, tool, args, cited evidence IDs, rationale (JSON) | LangGraph, LiteLLM, Jinja2 |
+| 8. Tier + checks | Re-check, value-match, MCP pin check | Ollama (Qwen/Llama, JSON mode) |
+| 9. Policy | Per-app pack plus floor rules; rate limit | OPA (Rego), Redis |
+| 10. Allow / escalate | Output scan, execute or queue, audit | Presidio, mock SOC, SQLModel |
+
+---
+
+## Packaging
+
+One engine ships in three forms. The hackathon builds the first two and pitches the third.
+
+| Form | What it is | Who uses it | Hackathon scope |
+|---|---|---|---|
+| `trustgate-core` (pip library) | The engine: trust labels, tiers, re-check hook, policy client, audit | Developers wrapping their own agent's tools | Built: all engine code lives here |
+| Adapters | LangGraph, plus OpenAI and Anthropic tool calling | Developers | LangGraph + one tool-calling adapter |
+| MCP gateway (Docker) | A proxy in front of any MCP server, with tool pinning | Security teams; no change to the agent's code | Built: used in the demo |
+| Cloud control plane | Policy packs, escalation queue, dashboards, multi-tenant accounts | Enterprises and MSSPs such as Mitigata | Roadmap slide only |
+
+The library call developers will write:
+
+```python
+from trustgate import Gate, Tier
+
+gate = Gate(policy="packs/soc.rego", recheck=facts_only_recheck,
+            mode="enforce")  # or "monitor"
+
+@gate.tool(tier=Tier.SECURITY_REDUCING)        # T1
+def close_alert(alert_id: str, reason: str): ...
+
+@gate.tool(tier=Tier.DISRUPTIVE, target="ip")  # T2
+def block_ip(ip: str): ...
+```
+
+Demo add-on: after the SOC demo, protect a second agent (a simple email assistant) in three lines with the generic pack, to show the engine generalises.
+
+---
+
+## Requirements from the team
+
+The code is built. These are the resources it cannot provide itself; each is a
+tracked placeholder (`bd list -l placeholder`) that fails closed until filled.
+Full detail and wiring: [`PLACEHOLDERS.md`](PLACEHOLDERS.md).
+
+### 1. Keys and accounts
+
+| Requirement | Used for | Until filled | Issue |
+|---|---|---|---|
+| [ ] LLM API key + pinned agent & attacker models | SOC agent and adaptive attacker via LiteLLM | Offline susceptible-agent simulator stands in | `tg-ej5` |
+| [ ] Hugging Face token + Prompt Guard 2 licence | Prompt Guard 2 detector signal | Detector runs on regex + stitch only | `tg-xeq` |
+| [ ] Ollama + a small re-check model | Facts-only re-check (default backend) | **T1 actions fail closed** (or train XGBoost) | `tg-8wu` |
+| [ ] VirusTotal / AbuseIPDB / OTX / URLhaus keys | Threat-intel → typed facts | Lookup skipped; fact stays unknown | `tg-8t2` |
+| [ ] Empty GitHub repository | CI, versioned policies | Local CI only | — |
+
+The agent and the attacker must be different models (dossier 13.3). The attack
+suite is sized with `--attempts` and `--clean`; set these to fit your LLM budget.
+
+### 2. Machine setup
+
+Measured on the build laptop: 11.7 GB RAM, 12 logical CPUs, NVIDIA GeForce RTX 2050 (4 GB VRAM), 160 GB free on C:, WSL with the `docker-desktop` distribution present.
+
+| Requirement | Why | Notes |
+|---|---|---|
+| [ ] Start Docker Desktop and set Resources → Memory to about 6 GB | The whole stack runs under Docker Compose | Installed, but the engine was not running when checked |
+| [ ] Install Ollama natively on Windows (not in Docker) | Facts-only re-check model on the GPU | Keeps the model off Docker's RAM budget |
+| [ ] `ollama pull qwen2.5:3b` (or another small model the team picks) | Re-check model | A 3B model fits the RTX 2050's 4 GB VRAM |
+| [ ] Install Python 3.11 | Running tests outside Docker | Containers use `python:3.11-slim`; the ML stack (LLM Guard in particular) is safest on 3.11. Local Python is 3.13 |
+| [ ] Close heavy apps while the stack runs | RAM headroom | Prompt Guard 2, LLM Guard, the Presidio spaCy model, Postgres, Redis and Streamlit together are tight on 11.7 GB |
+| [x] Node.js 22 | promptfoo regression suite | Already installed |
+| [x] Git | Version control | Already installed |
+| [ ] Tesseract OCR | Only if the Image OCR stretch item is kept | |
+
+### 3. Datasets
+
+| Dataset | Role | Notes |
+|---|---|---|
+| [ ] CIC-IDS2017 | Network alerts | Requires a registration form on the University of New Brunswick site |
+| [ ] UNSW-NB15 | Network alerts | Multi-GB |
+| [ ] Splunk BOTS | Realistic SOC scenarios | |
+| [ ] A public phishing corpus | Malicious email alerts | |
+| [ ] Enron email dataset | Benign baseline | About 1.7 GB |
+
+The team decides which of these to use and whether a subset is enough.
+
+### 4. Decisions only the team can make
+
+- [ ] **Hackathon rules (most important).** The blueprint allows code preparation before 31 Oct only if the organisers permit it, and the rules prohibit pre-existing solutions. Confirm with Mitigata (pratyasha.m@mitigata.com) before relying on this prepared codebase at the event. Issue `tg-e5d`.
+- [ ] **Pinned models** for the agent, the re-check and the adaptive attacker.
+- [ ] **Audit store:** SQLite (default) or PostgreSQL (`DATABASE_URL`; Compose uses Postgres). Both work.
+- [ ] **Policy-pack values:** replace the example critical assets / allowlists in `packs/*.json` with the real environment's. Issue `tg-981`.
+- [ ] **Optional scope.** The two "Should" items (per-app packs, broader detector signals) are built. The Could/Stretch items each need a resource: Lakera key, Splunk HEC / Wazuh, or Tesseract. Issue `tg-0gx`.
+
+What was implemented for each half: **A** (agent, mock SOC, attack suite, metrics) and **B** (ingest/splitter, gate, re-check, detector, MCP pinning, output scanner, dashboard, audit) are both done.
+
+---
+
+## Configuration (.env)
+
+Planned variable names. Copy into `.env` (never commit it); tool credentials live only in the proxy container as Docker secrets.
+
+```dotenv
+# LLMs (via LiteLLM)
+ANTHROPIC_API_KEY=
+OPENAI_API_KEY=
+GEMINI_API_KEY=
+TRUSTGATE_AGENT_MODEL=        # pinned model ID for the SOC agent
+TRUSTGATE_ATTACKER_MODEL=     # must differ from the agent model
+TRUSTGATE_RECHECK_MODEL=qwen2.5:3b
+
+# Detector models
+HF_TOKEN=
+
+# Threat intelligence (ingest only; responses cached)
+VIRUSTOTAL_API_KEY=
+ABUSEIPDB_API_KEY=
+OTX_API_KEY=
+URLHAUS_AUTH_KEY=
+
+# Gate
+TRUSTGATE_MODE=enforce        # enforce | monitor
+TRUSTGATE_POLICY=packs/soc.rego
+OLLAMA_HOST=http://host.docker.internal:11434
+OPA_URL=http://opa:8181
+DATABASE_URL=postgresql://trustgate:trustgate@postgres:5432/trustgate
+REDIS_URL=redis://redis:6379/0
+
+# Optional
+LAKERA_API_KEY=
+SPLUNK_HEC_URL=
+SPLUNK_HEC_TOKEN=
+```
+
+---
+
+## Repository layout
+
+All engine code lives in the `trustgate` library; the services are thin wrappers around it.
+
+```text
+TrustGate/
+├── docker-compose.yml · docker/Dockerfile · docker/Dockerfile.mcp-gateway
+├── .github/workflows/ci.yml
+├── pyproject.toml                 # trustgate-core + extras
+├── trustgate/                     # the library (trustgate-core)
+│   ├── models.py                  # shared Pydantic contracts
+│   ├── gate.py                    # Gate, @gate.tool, monitor mode, fail-closed watchdog
+│   ├── tiers.py · recheck.py · value_match.py · ratelimit.py · render.py
+│   ├── policy_client.py           # OPA client, per-app packs + floor rules
+│   ├── store.py                   # SQLModel audit (hash-chained) + JSON-lines/HEC SIEM export
+│   ├── output_scan.py             # v2: Presidio analyzer + anonymizer (LLM Guard fallback)
+│   ├── ingest/                    # decode, parsers/{email,logs}, enrich, split
+│   │   └── attachments.py         # v2: PDF, DOCX, XLSX, PPTX
+│   ├── detector/                  # heuristics, stitch, prompt_guard, llm_guard_scan, ensemble
+│   ├── mcp/                       # v2: pinning + gateway
+│   └── adapters/                  # langgraph, openai_tools
+├── services/
+│   ├── proxy/ · ingest/ · detector/   # FastAPI services
+│   ├── agent/                     # LangGraph + LiteLLM SOC agent, tool stubs → proxy
+│   ├── mock_soc/                  # sandbox tools (FastAPI) + MCP server + client
+│   ├── soc_tools.py               # the tool catalogue bound to the gate
+│   └── dashboard/app.py           # Streamlit: escalation queue + metrics
+├── packs/                         # soc.{rego,json}, generic.{rego,json}, floor.{rego,json}
+├── examples/email_assistant.py    # second agent protected in a few lines
+├── eval/                          # payloads, inject, build_attachments, generate_alerts, configs, sim, metrics, run
+├── scripts/                       # init_secrets, seed_demo, train_recheck, check_model_pins, ci_eval_guard
+├── tests/                         # 64 tests, each mapped to a silent-failure fix
+├── .tools/opa.exe                 # OPA binary (git-ignored)
+├── DISCLOSURE.md · PLACEHOLDERS.md · README.md
+```
+
+---
+
+## Running it live (Docker stack)
+
+Offline is the [quickstart](#quickstart-offline-no-keys) above. For the live stack:
+
+```bash
+cp .env.example .env            # fill in keys; see PLACEHOLDERS.md
+python scripts/init_secrets.py  # writes secrets/mock_soc_token.txt
+ollama pull qwen2.5:3b          # host-side re-check model (set TRUSTGATE_RECHECK_MODEL)
+
+docker compose up --build       # proxy, ingest, detector, OPA, Redis, Postgres, mock-soc, dashboard
+#   dashboard:  http://localhost:8501
+#   proxy:      http://localhost:8080
+
+python scripts/seed_demo.py                       # seed the rehearsed poisoned email + clean alerts
+docker compose run --rm --profile tools agent --alert-id E-DEMO   # triage it through the gate
+
+# MCP gateway in front of the mock SOC (tool pinning, no agent-code change):
+python -m trustgate.mcp.gateway --server-name mock-soc --policy packs/soc.rego \
+    -- python -m services.mock_soc.mcp_server
+```
+
+| Service | Network | Holds |
+|---|---|---|
+| agent | agent-net | LLM API key only; egress limited to the proxy and the LLM API |
+| ingest | core-net | Threat-intel API keys |
+| trustgate-proxy | agent-net + core-net | Tool credentials (Docker secrets); the only bridge between agent and tools |
+| mcp-gateway | agent-net + core-net | Tool pins; proxies MCP servers |
+| opa | core-net | Rego policies and pack data |
+| detector | core-net | Prompt Guard 2 and LLM Guard weights; scores only |
+| redis / postgres | core-net | Rate limits, queue, audit |
+| mock-soc | core-net | Sandbox state; email goes to a local outbox only |
+| dashboard | core-net, port 8501 published | Read access to the audit DB |
+
+---
+
+## Evaluation v2
+
+The headline changes: not only how many attacks TrustGate stops, but **how many got past the detector and were stopped by the gate**. That number is what makes the "use both" pitch credible.
+
+### Configurations (same alerts, same agent model)
+
+| Config | What runs | Why |
+|---|---|---|
+| A. Undefended | Agent alone | Baseline attack surface |
+| B. Detector only | Prompt Guard 2 + LLM Guard (Lakera if API access is available) | Stands in for today's detector products |
+| C. TrustGate | Full gate, with the detector as one input | Our system |
+| D. TrustGate, monitor mode | Same as C, logging instead of blocking | Shows what would be blocked during a safe rollout |
+
+### Attack sets
+
+The seven v1 classes:
+
+1. Direct override.
+2. Persona hijack.
+3. Context manipulation.
+4. Obfuscation.
+5. Context stitching.
+6. ADI-style fake metadata.
+7. Volume padding.
+
+Plus four new ones:
+
+- **Detector-evasion set:** fake metadata, persuasion with no commands, Hindi and Hinglish payloads.
+- **Attachment-borne:** payloads hidden inside PDF and Office files.
+- **MCP tool poisoning:** instructions inside a tool description, and a tool whose description changes after install.
+- **Exfiltration attempts:** prompts that push secrets or PII into outgoing emails or summaries.
+
+### Metrics
+
+- **Gate-only catches** (the headline): attacks that pass config B but are stopped by C.
+- **Attack success:** ASR@1, @10 and @100 per class.
+- **Triage accuracy and escalation rate**, always reported together.
+- **Data-leak rate:** sensitive values that reach an outbound action or summary.
+- **Overhead:** added latency and tokens per decision.
+- Carried over from v1: label coverage (target 100%), fail-closed count, canary catch rate.
+
+---
+
+## Build plan and cut order
+
+| Milestone | Hour | Proof |
+|---|---|---|
+| M1 core loop | 11 | One poisoned email: agent proposes close → proxy escalates with spans |
+| M2 suite runs | 23 | The attack suite runs on all configurations |
+| M3 numbers | 30 | Numbers on the dashboard |
+| M4 demo locked | 35 | Rehearsed; backup video recorded |
+
+Guardrails against scope creep:
+
+- Monitor-only mode is built right after M1; it is two hours and makes every later test safer.
+- No other v2 feature starts before M1 is green.
+- Every feature is time-boxed; at its box's end it ships as-is or is dropped.
+- If M2 slips past hour 25, all Should, Could and Stretch items are cut.
+
+Cut order when time runs short (first to go at the top):
+
+1. Image OCR
+2. Lakera as a baseline
+3. SIEM export
+4. Hindi and Hinglish classifier (keep the payloads)
+5. Broader detector signals
+6. Per-app policy packs (keep the SOC pack only)
+7. **Never cut:** the core loop, monitor-only mode, the detector-only baseline
+
+---
+
+## What we deliberately do not build
+
+| Gap | Why not | What we say instead |
+|---|---|---|
+| Attack data at Lakera's scale (80M+ prompts) | Years of crowd-sourced data | A focused, labelled SOC suite plus an adaptive attacker |
+| 100+ languages | Cannot validate them | We list the languages we actually tested |
+| Sub-50 ms at production scale | Prototype hardware and code | We report our measured latency per decision |
+| SSO, RBAC, multi-tenancy, certifications | Enterprise work with no demo value | Roadmap slide for the cloud control plane |
+| CaMeL-style data-flow tracking inside the agent's plan | Requires rewriting the agent | Value-matching at the tool boundary, stated as a limit |
+| Track record and customers | Only time fixes this | Open-source the core after the hackathon |
+
+---
+
+## Honest limits
+
+- TrustGate does not "solve" prompt injection. It claims containment: injections may land, but they cannot cause damage through gated actions.
+- A compromised real account can pass every hard check (valid DMARC, clean reputation). That is a detection problem, not injection, and it is out of scope.
+- The facts-only verdict is less accurate than the full-context one, so expect more escalations. The escalation rate is always reported next to accuracy.
+- A tool-boundary gate cannot see how the model turned untrusted text into an innocent-looking argument; value-matching on T2 and T3 targets is the mitigation, stated as a limit.
+- Never quote a language count, latency or accuracy figure that has not been measured.
+
+---
+
+## Disclosure
+
+The hackathon rules require disclosing every third-party tool, API, dataset and open-source component. `DISCLOSURE.md` is kept up to date as each library is added. Expected entries include FastAPI, Uvicorn, Pydantic, LangGraph, LiteLLM, Open Policy Agent, Ollama with Qwen or Llama, Llama Prompt Guard 2, LLM Guard, Microsoft Presidio, spaCy, PyMuPDF, python-docx, openpyxl, python-pptx, the Model Context Protocol SDK, Redis, PostgreSQL, SQLModel, structlog, OpenTelemetry, Streamlit, Plotly, promptfoo, garak, PyRIT, pytest, Docker, the threat-intel APIs listed above, and every dataset used.
+
+---
+
+## Sources
+
+- TrustGate v2: the updated approach (8 Oct 2026)
+- TrustGate project dossier and TrustGate implementation blueprint (8 Oct 2026)
+- Lakera Guard feature summary (AppSec Santa)
+- Introducing mcp-scan (Invariant Labs): tool poisoning, rug pulls, tool shadowing
+- Model Armor overview (Google Cloud): DLP, document and image screening, templates, inspect-only mode
+- Adaptive Evaluation of Out-of-Band Defenses (arXiv 2606.26479)
+- Agent Data Injection Attacks (arXiv 2607.05120)

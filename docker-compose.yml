@@ -1,0 +1,129 @@
+# TrustGate v2 stack (blueprint page 7). Two networks keep the agent away from
+# tool credentials: the agent reaches only the proxy and the LLM API; everything
+# else is internal. Fill .env and secrets/ first (scripts/init_secrets.py).
+name: trustgate
+
+x-build: &build
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+
+networks:
+  agent-net:
+    driver: bridge
+  core-net:
+    internal: true
+
+secrets:
+  mock_soc_token:
+    file: ./secrets/mock_soc_token.txt
+
+volumes:
+  pgdata:
+  ollama:
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: trustgate
+      POSTGRES_PASSWORD: trustgate
+      POSTGRES_DB: trustgate
+    volumes: [pgdata:/var/lib/postgresql/data]
+    networks: [core-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trustgate"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    networks: [core-net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  opa:
+    image: openpolicyagent/opa:1.21.1
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "/packs"]
+    volumes: [./packs:/packs:ro]
+    networks: [core-net]
+
+  # Facts-only re-check model. Runs on the host GPU by default (OLLAMA_HOST in
+  # .env -> http://host.docker.internal:11434). This container is the fallback if
+  # you prefer Ollama in Docker; CPU-only here, so the host install is faster.
+  ollama:
+    image: ollama/ollama:0.12.3
+    profiles: ["ollama-in-docker"]
+    volumes: [ollama:/root/.ollama]
+    networks: [core-net]
+
+  mock-soc:
+    <<: *build
+    command: ["uvicorn", "services.mock_soc.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8090"]
+    environment:
+      MOCK_SOC_DATABASE_URL: postgresql+psycopg://trustgate:trustgate@postgres:5432/trustgate
+    secrets: [mock_soc_token]
+    networks: [core-net]
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  detector:
+    <<: *build
+    command: ["uvicorn", "services.detector.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8082"]
+    env_file: [.env]
+    networks: [core-net]
+
+  ingest:
+    <<: *build
+    command: ["uvicorn", "services.ingest.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8081"]
+    env_file: [.env]
+    environment:
+      DATABASE_URL: postgresql+psycopg://trustgate:trustgate@postgres:5432/trustgate
+      DETECTOR_URL: http://detector:8082
+    networks: [core-net]
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  trustgate-proxy:
+    <<: *build
+    command: ["uvicorn", "services.proxy.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8080"]
+    env_file: [.env]
+    environment:
+      DATABASE_URL: postgresql+psycopg://trustgate:trustgate@postgres:5432/trustgate
+      REDIS_URL: redis://redis:6379/0
+      OPA_URL: http://opa:8181
+      MOCK_SOC_URL: http://mock-soc:8090
+    secrets: [mock_soc_token]
+    networks: [agent-net, core-net]
+    ports: ["8080:8080"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      opa: {condition: service_started}
+
+  dashboard:
+    <<: *build
+    command: ["streamlit", "run", "services/dashboard/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://trustgate:trustgate@postgres:5432/trustgate
+      TRUSTGATE_PROXY_URL: http://trustgate-proxy:8080
+    networks: [core-net]
+    ports: ["8501:8501"]
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  # The agent reaches only the proxy and the LLM API (agent-net). It holds no
+  # tool credentials. One-shot: `docker compose run --rm agent --alert-id E-0001`.
+  agent:
+    <<: *build
+    entrypoint: ["python", "-m", "services.agent"]
+    env_file: [.env]
+    environment:
+      TRUSTGATE_PROXY_URL: http://trustgate-proxy:8080
+    networks: [agent-net]
+    profiles: ["tools"]
+    depends_on: [trustgate-proxy]
