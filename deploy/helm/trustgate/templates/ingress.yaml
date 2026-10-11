@@ -1,0 +1,32 @@
+{{- if .Values.ingress.enabled }}
+{{- $fn := include "trustgate.fullname" . -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fn }}
+  labels: {{- include "trustgate.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range $r := list (list .Values.ingress.dashboardHost "dashboard" .Values.dashboard.service.port)
+                         (list .Values.ingress.proxyHost "proxy" .Values.proxy.service.port)
+                         (list .Values.ingress.ingestHost "ingest" .Values.ingest.service.port) }}
+    {{- if index $r 0 }}
+    - host: {{ index $r 0 }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: {name: {{ $fn }}-{{ index $r 1 }}, port: {number: {{ index $r 2 }}}}
+    {{- end }}
+    {{- end }}
+{{- end }}

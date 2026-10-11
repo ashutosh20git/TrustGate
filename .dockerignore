@@ -1,0 +1,20 @@
+# Keep secrets, local state and build noise out of the image.
+.git
+.venv
+.tools
+.env
+secrets
+*.db
+*.db-journal
+data
+models/*.json
+__pycache__
+*.pyc
+.pytest_cache
+*.egg-info
+.beads
+.claude
+.codex
+.agents
+eval/results/runs.sqlite
+audit.jsonl

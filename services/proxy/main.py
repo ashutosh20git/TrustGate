@@ -20,6 +20,7 @@ alerts, metrics, rollout, pins) need an analyst token too.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import random
 from collections import Counter
 from typing import Any
@@ -28,7 +29,6 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from services.mock_soc.client import MockSOCClient
 from services.soc_tools import register_soc_tools, soc_tool_functions, soc_undo_functions
 from trustgate.analysts import AnalystDirectory
 from trustgate.config import NotConfigured, Settings
@@ -77,6 +77,19 @@ def _ensure_canaries(store: Store, gate: Gate, rng: random.Random) -> None:
     store.open_escalation(action.model_copy(update={"tool": "close_alert", "verdict": "benign"}), decision, canary=True)
 
 
+def load_soc_client(settings: Settings) -> Any:
+    """Build the SOC connector named by TRUSTGATE_SOC_CLIENT ("module:Class").
+
+    It is called as Class(base_url, token) with MOCK_SOC_URL and the mock_soc_token
+    secret, and must provide the methods of services.mock_soc.client.MockSOCClient
+    (the tools, their reverse actions, and query_logs). A connector that cannot start
+    raises NotConfigured: decisions still work and every allowed action fails closed.
+    """
+    module, _, name = settings.soc_client.partition(":")
+    cls = getattr(importlib.import_module(module), name)
+    return cls(settings.mock_soc_url, settings.mock_soc_token)
+
+
 def create_app(gate: Gate | None = None, settings: Settings | None = None,
                analysts: AnalystDirectory | None = None) -> FastAPI:
     settings = settings or Settings()
@@ -85,7 +98,7 @@ def create_app(gate: Gate | None = None, settings: Settings | None = None,
     if gate is None:
         gate = Gate(settings.policy, settings=settings, store=store)
         try:
-            client = MockSOCClient(settings.mock_soc_url, settings.mock_soc_token)
+            client = load_soc_client(settings)
         except NotConfigured:
             client = None  # placeholder: tools fail at execution, decisions still work
         if client is not None:

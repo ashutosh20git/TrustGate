@@ -1,15 +1,37 @@
-# TrustGate v2 stack (blueprint page 7). Two networks keep the agent away from
-# tool credentials: the agent reaches only the proxy and the LLM API; everything
-# else is internal. Fill .env and secrets/ first (scripts/init_secrets.py).
+# TrustGate v2 stack (blueprint page 7), ready to self-host. See docs/SELF_HOSTING.md.
+#
+#   python3 scripts/init_secrets.py --analyst alice --analyst bob   # also creates .env
+#   docker compose pull --ignore-pull-failures   # published image, if reachable
+#   docker compose up -d                         # builds locally if it was not pulled
+#
+# Networks keep the agent away from tool credentials and data:
+#   agent-net    the agent reaches only the proxy (and the LLM API)
+#   analyst-net  the dashboard, published for analysts
+#   egress-net   outbound internet for ingest (threat intel, DNS for SPF/DKIM/DMARC)
+#                and the detector (model download); nothing listens on it
+#   core-net     internal only: databases, OPA, the SOC tools
+# Published ports bind to TRUSTGATE_BIND_ADDR (default 127.0.0.1); put a TLS
+# reverse proxy in front before exposing them to the network.
 name: trustgate
 
-x-build: &build
+x-service: &service
+  image: ${TRUSTGATE_IMAGE:-ghcr.io/ashutosh20git/trustgate:latest}
   build:
     context: .
     dockerfile: docker/Dockerfile
+    args:
+      EXTRAS: ${TRUSTGATE_EXTRAS:-standard}
+  restart: unless-stopped
+  env_file: [.env]
+
+x-db-url: &db-url postgresql+psycopg://trustgate:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/trustgate
 
 networks:
   agent-net:
+    driver: bridge
+  analyst-net:
+    driver: bridge
+  egress-net:
     driver: bridge
   core-net:
     internal: true
@@ -19,17 +41,22 @@ secrets:
     file: ./secrets/mock_soc_token.txt
   analyst_tokens:  # name:sha256(token) per line; only the proxy verifies approvals
     file: ./secrets/analyst_tokens.txt
+  ingest_token:    # bearer token for the SIEM that posts alerts to ingest
+    file: ./secrets/ingest_token.txt
 
 volumes:
   pgdata:
   ollama:
+  ingest-data:
+  detector-data:
 
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: trustgate
-      POSTGRES_PASSWORD: trustgate
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: trustgate
     volumes: [pgdata:/var/lib/postgresql/data]
     networks: [core-net]
@@ -41,6 +68,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     networks: [core-net]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -50,80 +78,100 @@ services:
 
   opa:
     image: openpolicyagent/opa:1.21.1
+    restart: unless-stopped
     command: ["run", "--server", "--addr=0.0.0.0:8181", "/packs"]
     volumes: [./packs:/packs:ro]
     networks: [core-net]
 
-  # Facts-only re-check model. Runs on the host GPU by default (OLLAMA_HOST in
-  # .env -> http://host.docker.internal:11434). This container is the fallback if
-  # you prefer Ollama in Docker; CPU-only here, so the host install is faster.
+  # Facts-only re-check model, optional. The image ships a starter XGBoost model
+  # (TRUSTGATE_RECHECK_BACKEND=xgboost). For Ollama: run it on the host (OLLAMA_HOST=
+  # http://host.docker.internal:11434) or here with --profile ollama-in-docker
+  # (OLLAMA_HOST=http://ollama:11434; CPU-only, slower).
   ollama:
     image: ollama/ollama:0.12.3
+    restart: unless-stopped
     profiles: ["ollama-in-docker"]
     volumes: [ollama:/root/.ollama]
-    networks: [core-net]
+    networks: [core-net, egress-net]
 
+  # Stand-in SOC (tickets, firewall, EDR, IdP). Replace with your real tools:
+  # docs/SELF_HOSTING.md "Connecting your SOC tools".
   mock-soc:
-    <<: *build
+    <<: *service
+    env_file: []
     command: ["uvicorn", "services.mock_soc.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8090"]
     environment:
-      MOCK_SOC_DATABASE_URL: postgresql+psycopg://trustgate:trustgate@postgres:5432/trustgate
+      MOCK_SOC_DATABASE_URL: *db-url
     secrets: [mock_soc_token]
     networks: [core-net]
     depends_on:
       postgres: {condition: service_healthy}
 
   detector:
-    <<: *build
+    <<: *service
     command: ["uvicorn", "services.detector.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8082"]
-    env_file: [.env]
-    networks: [core-net]
+    volumes: [detector-data:/app/data]
+    networks: [core-net, egress-net]
 
   ingest:
-    <<: *build
+    <<: *service
     command: ["uvicorn", "services.ingest.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8081"]
-    env_file: [.env]
     environment:
-      DATABASE_URL: postgresql+psycopg://trustgate:trustgate@postgres:5432/trustgate
+      DATABASE_URL: *db-url
       DETECTOR_URL: http://detector:8082
-    networks: [core-net]
+    secrets: [ingest_token]
+    volumes: [ingest-data:/app/data]
+    networks: [core-net, egress-net]
+    ports: ["${TRUSTGATE_BIND_ADDR:-127.0.0.1}:8081:8081"]
+    healthcheck: &http-health
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:8081/healthz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
     depends_on:
       postgres: {condition: service_healthy}
 
   trustgate-proxy:
-    <<: *build
+    <<: *service
     command: ["uvicorn", "services.proxy.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8080"]
-    env_file: [.env]
     environment:
-      DATABASE_URL: postgresql+psycopg://trustgate:trustgate@postgres:5432/trustgate
+      DATABASE_URL: *db-url
       REDIS_URL: redis://redis:6379/0
       OPA_URL: http://opa:8181
       MOCK_SOC_URL: http://mock-soc:8090
     secrets: [mock_soc_token, analyst_tokens]
-    networks: [agent-net, core-net]
-    ports: ["8080:8080"]
+    networks: [agent-net, analyst-net, core-net]
+    ports: ["${TRUSTGATE_BIND_ADDR:-127.0.0.1}:8080:8080"]
+    extra_hosts: ["host.docker.internal:host-gateway"]  # host Ollama on Linux
+    healthcheck:
+      <<: *http-health
+      # /healthz is 503 while the gate fails closed (OPA or Redis down, saturated).
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:8080/healthz', timeout=3)"]
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
       opa: {condition: service_started}
 
   dashboard:
-    <<: *build
-    command: ["streamlit", "run", "services/dashboard/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    <<: *service
+    env_file: []
+    command: ["streamlit", "run", "services/dashboard/app.py", "--server.port=8501", "--server.address=0.0.0.0",
+              "--server.headless=true", "--browser.gatherUsageStats=false"]
     environment:
-      DATABASE_URL: postgresql+psycopg://trustgate:trustgate@postgres:5432/trustgate
+      DATABASE_URL: *db-url
       TRUSTGATE_PROXY_URL: http://trustgate-proxy:8080
-    networks: [core-net]
-    ports: ["8501:8501"]
+    networks: [analyst-net, core-net]
+    ports: ["${TRUSTGATE_BIND_ADDR:-127.0.0.1}:8501:8501"]
     depends_on:
       postgres: {condition: service_healthy}
 
   # The agent reaches only the proxy and the LLM API (agent-net). It holds no
   # tool credentials. One-shot: `docker compose run --rm agent --alert-id E-0001`.
   agent:
-    <<: *build
+    <<: *service
+    restart: "no"
     entrypoint: ["python", "-m", "services.agent"]
-    env_file: [.env]
     environment:
       TRUSTGATE_PROXY_URL: http://trustgate-proxy:8080
     networks: [agent-net]

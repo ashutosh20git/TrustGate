@@ -1,0 +1,96 @@
+{{- /*
+One Deployment + Service per TrustGate component, all from the same image.
+  name     component name          port     container port
+  command  container command       secrets  /run/secrets keys it may read
+  probe    HTTP readiness path ("" = TCP)
+*/ -}}
+{{- $fn := include "trustgate.fullname" . -}}
+{{- $packs := .Values.opa.packsConfigMap -}}
+{{- $apps := list
+  (dict "name" "proxy" "enabled" true "replicas" .Values.proxy.replicas "port" 8080 "probe" "/healthz"
+        "resources" .Values.proxy.resources "secrets" (list "analyst_tokens" "mock_soc_token" "provenance_key") "packs" true
+        "command" (list "uvicorn" "services.proxy.main:create_app" "--factory" "--host" "0.0.0.0" "--port" "8080"))
+  (dict "name" "ingest" "enabled" true "replicas" .Values.ingest.replicas "port" 8081 "probe" "/healthz"
+        "resources" .Values.ingest.resources "secrets" (list "ingest_token" "provenance_key") "packs" false
+        "command" (list "uvicorn" "services.ingest.main:create_app" "--factory" "--host" "0.0.0.0" "--port" "8081"))
+  (dict "name" "detector" "enabled" .Values.detector.enabled "replicas" .Values.detector.replicas "port" 8082 "probe" "/healthz"
+        "resources" .Values.detector.resources "secrets" (list) "packs" false
+        "command" (list "uvicorn" "services.detector.main:create_app" "--factory" "--host" "0.0.0.0" "--port" "8082"))
+  (dict "name" "dashboard" "enabled" .Values.dashboard.enabled "replicas" 1 "port" 8501 "probe" "/_stcore/health"
+        "resources" .Values.dashboard.resources "secrets" (list) "packs" false
+        "command" (list "streamlit" "run" "services/dashboard/app.py" "--server.port=8501" "--server.address=0.0.0.0"
+                        "--server.headless=true" "--browser.gatherUsageStats=false"))
+  (dict "name" "mock-soc" "enabled" .Values.mockSoc.enabled "replicas" 1 "port" 8090 "probe" ""
+        "resources" (dict) "secrets" (list "mock_soc_token") "packs" false
+        "command" (list "uvicorn" "services.mock_soc.main:create_app" "--factory" "--host" "0.0.0.0" "--port" "8090"))
+-}}
+{{- range $app := $apps }}
+{{- if $app.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fn }}-{{ $app.name }}
+  labels: {{- include "trustgate.labels" $ | nindent 4 }}
+spec:
+  selector: {{- include "trustgate.selector" (list $ $app.name) | nindent 4 }}
+  ports: [{name: http, port: {{ $app.port }}, targetPort: {{ $app.port }}}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fn }}-{{ $app.name }}
+  labels: {{- include "trustgate.labels" $ | nindent 4 }}
+spec:
+  replicas: {{ $app.replicas }}
+  selector:
+    matchLabels: {{- include "trustgate.selector" (list $ $app.name) | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "trustgate.selector" (list $ $app.name) | nindent 8 }}
+      annotations:
+        # Roll pods when config or secrets change.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") $ | sha256sum | trunc 16 }}
+        checksum/secrets: {{ include (print $.Template.BasePath "/secrets.yaml") $ | sha256sum | trunc 16 }}
+    spec:
+      {{- include "trustgate.podSpec" $ | nindent 6 }}
+      containers:
+        - name: {{ $app.name }}
+          {{- include "trustgate.containerCommon" $ | nindent 10 }}
+          command: {{ toJson $app.command }}
+          ports: [{containerPort: {{ $app.port }}}]
+          readinessProbe:
+            {{- if $app.probe }}
+            httpGet: {path: {{ $app.probe }}, port: {{ $app.port }}}
+            {{- else }}
+            tcpSocket: {port: {{ $app.port }}}
+            {{- end }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            # The proxy's /healthz is 503 while the gate fails closed (OPA or Redis down,
+            # saturated): the pod leaves the Service instead of escalating everything.
+          livenessProbe:
+            tcpSocket: {port: {{ $app.port }}}
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          {{- with $app.resources }}
+          resources: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            {{- include "trustgate.writableMounts" $ | nindent 12 }}
+            {{- if $app.secrets }}
+            - {name: run-secrets, mountPath: /run/secrets, readOnly: true}
+            {{- end }}
+            {{- if and $app.packs $packs }}
+            - {name: packs, mountPath: /app/packs, readOnly: true}
+            {{- end }}
+      volumes:
+        {{- include "trustgate.writableVolumes" $ | nindent 8 }}
+        {{- if $app.secrets }}
+        {{- include "trustgate.secretVolume" (list $ $app.secrets) | nindent 8 }}
+        {{- end }}
+        {{- if and $app.packs $packs }}
+        - {name: packs, configMap: {name: {{ $packs }}}}
+        {{- end }}
+{{- end }}
+{{- end }}

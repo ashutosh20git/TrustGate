@@ -7,6 +7,14 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      # For the multi-replica audit chain test (tests/test_audit_chain_concurrency.py).
+      postgres:
+        image: postgres:16-alpine
+        env: {POSTGRES_PASSWORD: ci}
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -37,7 +45,31 @@ jobs:
         run: python scripts/check_model_pins.py
 
       - name: Tests
+        env:
+          TRUSTGATE_TEST_POSTGRES_URL: postgresql+psycopg://postgres:ci@localhost:5432/postgres
         run: pytest -q
 
       - name: Eval smoke (offline simulator) + regression guard
         run: python scripts/ci_eval_guard.py
+
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compose file is valid
+        run: touch .env && POSTGRES_PASSWORD=ci docker compose config -q
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: Helm lint and render
+        run: |
+          helm lint deploy/helm/trustgate -f deploy/helm/trustgate/ci/test-values.yaml
+          helm template ci deploy/helm/trustgate -f deploy/helm/trustgate/ci/test-values.yaml > rendered.yaml
+
+      - name: Rendered manifests match the Kubernetes schema
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz kubeconform
+          ./kubeconform -strict -summary -kubernetes-version 1.31.0 rendered.yaml

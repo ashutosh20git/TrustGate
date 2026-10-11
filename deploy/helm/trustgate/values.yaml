@@ -1,0 +1,120 @@
+# TrustGate Helm values. See docs/SELF_HOSTING.md for the walkthrough.
+
+image:
+  repository: ghcr.io/ashutosh20git/trustgate   # or your registry's copy
+  tag: "2.4"
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Gate settings (non-secret). Anything not listed here can go in `env`.
+gate:
+  mode: enforce                  # enforce | monitor (log "would block", block nothing)
+  policy: packs/soc.rego         # packs/soc.rego | packs/generic.rego
+  recheckBackend: xgboost        # xgboost (starter model in the image) | ollama
+  recheckModel: ""               # ollama model, e.g. qwen2.5:3b
+  ollamaHost: ""                 # e.g. http://ollama.ollama.svc:11434
+  mtaAuthservId: ""              # your MTA's Authentication-Results authserv-id
+
+# Extra plain environment variables for every TrustGate container.
+env: {}
+#  TRUSTGATE_ESCALATION_TTL_S: "14400"
+#  HTTPS_PROXY: http://egress-proxy.corp:3128
+
+# Secrets. Either let the chart create them from these values, or point
+# `existingSecret` at a Secret you manage (sealed-secrets, external-secrets, ...).
+secrets:
+  existingSecret: ""             # must hold the keys below that you use
+  # Files mounted at /run/secrets (the same names Docker Compose uses).
+  # Generate with scripts/init_secrets.py and copy from secrets/*.txt.
+  ingestToken: ""                # bearer token your SIEM sends to ingest (required)
+  analystTokens: ""              # "name:sha256(token)" lines (required for approvals)
+  mockSocToken: ""               # only with mockSoc.enabled
+  provenanceKey: ""              # optional; the same on every TrustGate instance
+  # Environment secrets (API keys). Leave empty to skip.
+  env: {}
+  #  VIRUSTOTAL_API_KEY: ...
+  #  ABUSEIPDB_API_KEY: ...
+  #  OTX_API_KEY: ...
+  #  URLHAUS_AUTH_KEY: ...
+  #  HF_TOKEN: ...
+  #  SPLUNK_HEC_TOKEN: ...
+
+# Bundled Postgres (single replica, for evaluation and small sites). For
+# production set enabled: false and externalUrl to a managed database.
+postgresql:
+  enabled: true
+  image: postgres:16-alpine
+  password: ""                   # required when enabled
+  storage: 10Gi
+  storageClass: ""
+  externalUrl: ""                # postgresql+psycopg://user:pass@host:5432/db (used when enabled: false)
+
+redis:
+  enabled: true
+  image: redis:7-alpine
+  externalUrl: ""                # redis://host:6379/0 (used when enabled: false)
+
+opa:
+  image: openpolicyagent/opa:1.21.1
+  # Custom policy packs: a ConfigMap holding floor.rego, floor.json and your pack's
+  # .rego and .json. Mounted into both OPA and the proxy. Empty = the image's packs/.
+  packsConfigMap: ""
+
+proxy:
+  replicas: 2
+  resources: {requests: {cpu: 250m, memory: 768Mi}, limits: {memory: 1536Mi}}
+  service: {type: ClusterIP, port: 8080}
+
+ingest:
+  replicas: 1
+  resources: {requests: {cpu: 250m, memory: 1Gi}, limits: {memory: 2Gi}}
+  service: {type: ClusterIP, port: 8081}
+
+detector:
+  enabled: true
+  replicas: 1
+  resources: {requests: {cpu: 250m, memory: 512Mi}, limits: {memory: 4Gi}}
+
+dashboard:
+  enabled: true
+  resources: {requests: {cpu: 100m, memory: 512Mi}, limits: {memory: 1Gi}}
+  service: {type: ClusterIP, port: 8501}
+
+# Stand-in SOC tools for evaluation. Disable once you have connected real tools
+# (docs/SELF_HOSTING.md, "Connecting your SOC tools").
+mockSoc:
+  enabled: true
+
+# Ingress for the analyst-facing endpoints. The agent talks to the proxy Service
+# inside the cluster; do not route the dashboard through the agent's network.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  tls: []
+  dashboardHost: ""              # e.g. trustgate.corp.example
+  proxyHost: ""                  # analyst API; leave empty to keep it in-cluster
+  ingestHost: ""                 # for a SIEM outside the cluster
+
+# NetworkPolicies mirror the Compose networks: data stores, OPA, the detector and
+# the SOC tools accept traffic only from the TrustGate components that need them.
+networkPolicy:
+  enabled: true
+  # Who may call the proxy (your agent) and ingest (your SIEM). Empty = anyone.
+  proxyFrom: []
+  #  - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: soc-agent}}
+  ingestFrom: []
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+  seccompProfile: {type: RuntimeDefault}
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: {drop: [ALL]}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

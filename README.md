@@ -6,6 +6,8 @@
 
 Mitigata CyberForge 2026 · Team: Ashutosh Neelesh Dubey + teammate · Build window: Sat 31 Oct 2026, 10:00 → Sun 1 Nov 2026, 23:59 IST (about 38 hours)
 
+> **Self-host it:** `python3 scripts/init_secrets.py --analyst you && docker compose pull --ignore-pull-failures && docker compose up -d`, then follow [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) ("Try it in five minutes").
+
 > **Status: built.** The v1 engine, all four v2 must-haves, the two "Should" items, the library, the MCP gateway, the services, the evaluation harness and the test suite are implemented. It runs **fully offline today** (`pytest`, `python -m eval.run`) using the bundled OPA binary and deterministic stand-ins. Running it **live** (real agent, real re-check model, Docker stack) needs the keys and services in [requirements from the team](#requirements-from-the-team); each one is a tracked placeholder that fails closed until filled — see [`PLACEHOLDERS.md`](PLACEHOLDERS.md).
 
 ## Quickstart (offline, no keys)
@@ -397,36 +399,46 @@ TrustGate/
 
 ## Running it live (Docker stack)
 
-Offline is the [quickstart](#quickstart-offline-no-keys) above. For the live stack:
+Offline is the [quickstart](#quickstart-offline-no-keys) above. To run TrustGate in your own network
+(Docker Compose on a VM, or the Helm chart on Kubernetes), follow **[docs/SELF_HOSTING.md](docs/SELF_HOSTING.md)**:
+setup, connecting your real SOC tools (`TRUSTGATE_SOC_CLIENT`), going live in monitor mode, and operations.
 
 ```bash
-cp .env.example .env            # fill in keys; see PLACEHOLDERS.md
-python scripts/init_secrets.py  # writes secrets/mock_soc_token.txt and analyst token hashes; prints each analyst token once
-ollama pull qwen2.5:3b          # host-side re-check model (set TRUSTGATE_RECHECK_MODEL)
+python3 scripts/init_secrets.py --analyst alice  # standard library only; creates .env (random
+                                                 # POSTGRES_PASSWORD) and secrets/; prints each analyst token once
+docker compose pull --ignore-pull-failures   # published image (ghcr.io/ashutosh20git/trustgate)
+docker compose up -d            # proxy, ingest, detector, OPA, Redis, Postgres, mock-soc, dashboard
+#   dashboard:  http://127.0.0.1:8501   (paste your analyst token)
+#   proxy:      http://127.0.0.1:8080   (agent tool calls)
+#   ingest:     http://127.0.0.1:8081   (SIEM posts alerts with secrets/ingest_token.txt)
 
-docker compose up --build       # proxy, ingest, detector, OPA, Redis, Postgres, mock-soc, dashboard
-#   dashboard:  http://localhost:8501
-#   proxy:      http://localhost:8080
+docker compose exec ingest python scripts/seed_demo.py   # seed the poisoned email + clean alerts
+docker compose --profile tools run --rm agent --alert-id E-DEMO   # triage it through the gate
 
-python scripts/seed_demo.py                       # seed the rehearsed poisoned email + clean alerts
-docker compose run --rm --profile tools agent --alert-id E-DEMO   # triage it through the gate
+# Kubernetes:
+helm install trustgate deploy/helm/trustgate -n trustgate --create-namespace -f my-values.yaml
 
 # MCP gateway in front of the mock SOC (tool pinning, no agent-code change):
 python -m trustgate.mcp.gateway --server-name mock-soc --policy packs/soc.rego \
     -- python -m services.mock_soc.mcp_server
 ```
 
+The facts-only re-check defaults to the starter XGBoost model baked into the image, so the stack runs without
+a GPU. For an LLM re-check, `ollama pull qwen2.5:3b` on the host and set `TRUSTGATE_RECHECK_BACKEND=ollama`.
+
 | Service | Network | Holds |
 |---|---|---|
 | agent | agent-net | LLM API key only; egress limited to the proxy and the LLM API |
-| ingest | core-net | Threat-intel API keys |
-| trustgate-proxy | agent-net + core-net | Tool credentials and analyst token hashes (Docker secrets); the only bridge between agent and tools |
+| ingest | core-net + egress-net, port 8081 | Threat-intel API keys; the ingest token (only the SIEM may post alerts) |
+| trustgate-proxy | agent-net + analyst-net + core-net, port 8080 | Tool credentials and analyst token hashes (Docker secrets); the only bridge between agent and tools |
 | mcp-gateway | agent-net + core-net | Tool pins; proxies MCP servers |
 | opa | core-net | Rego policies and pack data |
-| detector | core-net | Prompt Guard 2 and LLM Guard weights; scores only |
+| detector | core-net + egress-net | Prompt Guard 2 and LLM Guard weights; scores only |
 | redis / postgres | core-net | Rate limits, queue, audit |
 | mock-soc | core-net | Sandbox state; email goes to a local outbox only |
-| dashboard | core-net, port 8501 published | Read access to the audit DB |
+| dashboard | analyst-net + core-net, port 8501 | Read access to the audit DB |
+
+Published ports bind to `127.0.0.1` unless `TRUSTGATE_BIND_ADDR` says otherwise.
 
 ---
 

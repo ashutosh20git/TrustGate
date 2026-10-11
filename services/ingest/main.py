@@ -2,15 +2,19 @@
 
     uvicorn services.ingest.main:create_app --factory --port 8081
 
-Holds the threat-intel API keys; the agent never sees them.
+Holds the threat-intel API keys; the agent never sees them. Every endpoint but
+/healthz needs the ingest bearer token (TRUSTGATE_INGEST_TOKEN or the Docker
+secret ingest_token): alerts carry typed facts the gate trusts, and the stored
+evidence holds attacker text and personal data.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hmac
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import PlainTextResponse
 from pydantic import ValidationError
 
@@ -26,7 +30,14 @@ def create_app(splitter: Splitter | None = None, store: Store | None = None) -> 
     store = store or Store(settings=settings)
     app = FastAPI(title="TrustGate ingest", version="2.0.0")
 
-    @app.post("/v1/alerts")
+    def require_token(authorization: str | None = Header(default=None)) -> None:
+        if not settings.ingest_token:
+            raise HTTPException(503, "ingest authentication not configured; run scripts/init_secrets.py")
+        scheme, _, token = (authorization or "").partition(" ")
+        if scheme != "Bearer" or not hmac.compare_digest(token.encode(), settings.ingest_token.encode()):
+            raise HTTPException(401, "a valid ingest token is required")
+
+    @app.post("/v1/alerts", dependencies=[Depends(require_token)])
     async def post_alert(payload: dict[str, Any]) -> dict[str, Any]:
         try:
             alert = await asyncio.to_thread(splitter.split, payload)
@@ -35,27 +46,29 @@ def create_app(splitter: Splitter | None = None, store: Store | None = None) -> 
         store.put_alert(alert)
         return {"alert": alert.model_dump(mode="json"), "notes": splitter.notes}
 
-    @app.get("/v1/alerts/{alert_id}")
+    @app.get("/v1/alerts/{alert_id}", dependencies=[Depends(require_token)])
     def get_alert(alert_id: str) -> dict[str, Any]:
         alert = store.get_alert(alert_id)
         if alert is None:
             raise HTTPException(404)
         return alert.model_dump(mode="json")
 
-    @app.get("/v1/alerts/{alert_id}/rendered", response_class=PlainTextResponse)
+    @app.get("/v1/alerts/{alert_id}/rendered", response_class=PlainTextResponse,
+             dependencies=[Depends(require_token)])
     def rendered(alert_id: str) -> str:
         alert = store.get_alert(alert_id)
         if alert is None:
             raise HTTPException(404)
         return render_alert(alert)
 
-    @app.get("/v1/alerts")
+    @app.get("/v1/alerts", dependencies=[Depends(require_token)])
     def list_alerts(limit: int = 100) -> list[dict[str, Any]]:
         return [{"alert_id": a.alert_id, "source": a.source, "severity": a.severity, "tags": a.tags,
                  "label_coverage": a.label_coverage.ratio} for a in store.list_alerts(limit)]
 
     @app.get("/healthz")
     def healthz() -> dict[str, Any]:
-        return {"ok": True, "mta_authserv_id": bool(settings.mta_authserv_id)}
+        return {"ok": True, "mta_authserv_id": bool(settings.mta_authserv_id),
+                "auth_configured": bool(settings.ingest_token)}
 
     return app
