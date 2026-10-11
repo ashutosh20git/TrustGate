@@ -1,0 +1,29 @@
+{{- $fn := include "trustgate.fullname" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fn }}-env
+  labels: {{- include "trustgate.labels" . | nindent 4 }}
+data:
+  TRUSTGATE_MODE: {{ .Values.gate.mode | quote }}
+  TRUSTGATE_POLICY: {{ .Values.gate.policy | quote }}
+  TRUSTGATE_RECHECK_BACKEND: {{ .Values.gate.recheckBackend | quote }}
+  TRUSTGATE_XGB_MODEL: models/recheck_xgb.json
+  {{- with .Values.gate.recheckModel }}
+  TRUSTGATE_RECHECK_MODEL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.gate.ollamaHost }}
+  OLLAMA_HOST: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.gate.mtaAuthservId }}
+  TRUSTGATE_MTA_AUTHSERV_ID: {{ . | quote }}
+  {{- end }}
+  TRUSTGATE_RATELIMIT_BACKEND: redis
+  REDIS_URL: {{ if .Values.redis.enabled }}{{ printf "redis://%s-redis:6379/0" $fn | quote }}{{ else }}{{ required "redis.externalUrl is required when redis.enabled is false" .Values.redis.externalUrl | quote }}{{ end }}
+  OPA_URL: {{ printf "http://%s-opa:8181" $fn | quote }}
+  MOCK_SOC_URL: {{ printf "http://%s-mock-soc:8090" $fn | quote }}
+  DETECTOR_URL: {{ printf "http://%s-detector:8082" $fn | quote }}
+  TRUSTGATE_PROXY_URL: {{ printf "http://%s-proxy:%v" $fn .Values.proxy.service.port | quote }}
+  {{- range $k, $v := .Values.env }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}

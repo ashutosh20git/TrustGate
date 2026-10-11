@@ -397,36 +397,45 @@ TrustGate/
 
 ## Running it live (Docker stack)
 
-Offline is the [quickstart](#quickstart-offline-no-keys) above. For the live stack:
+Offline is the [quickstart](#quickstart-offline-no-keys) above. To run TrustGate in your own network
+(Docker Compose on a VM, or the Helm chart on Kubernetes), follow **[docs/SELF_HOSTING.md](docs/SELF_HOSTING.md)**:
+setup, connecting your real SOC tools (`TRUSTGATE_SOC_CLIENT`), going live in monitor mode, and operations.
 
 ```bash
-cp .env.example .env            # fill in keys; see PLACEHOLDERS.md
-python scripts/init_secrets.py  # writes secrets/mock_soc_token.txt and analyst token hashes; prints each analyst token once
-ollama pull qwen2.5:3b          # host-side re-check model (set TRUSTGATE_RECHECK_MODEL)
-
-docker compose up --build       # proxy, ingest, detector, OPA, Redis, Postgres, mock-soc, dashboard
-#   dashboard:  http://localhost:8501
-#   proxy:      http://localhost:8080
+python scripts/init_secrets.py --analyst alice   # creates .env (random POSTGRES_PASSWORD) and secrets/;
+                                                 # prints each analyst token once
+docker compose up -d --build    # proxy, ingest, detector, OPA, Redis, Postgres, mock-soc, dashboard
+#   dashboard:  http://127.0.0.1:8501   (paste your analyst token)
+#   proxy:      http://127.0.0.1:8080   (agent tool calls)
+#   ingest:     http://127.0.0.1:8081   (SIEM posts alerts with secrets/ingest_token.txt)
 
 python scripts/seed_demo.py                       # seed the rehearsed poisoned email + clean alerts
-docker compose run --rm --profile tools agent --alert-id E-DEMO   # triage it through the gate
+docker compose --profile tools run --rm agent --alert-id E-DEMO   # triage it through the gate
+
+# Kubernetes:
+helm install trustgate deploy/helm/trustgate -n trustgate --create-namespace -f my-values.yaml
 
 # MCP gateway in front of the mock SOC (tool pinning, no agent-code change):
 python -m trustgate.mcp.gateway --server-name mock-soc --policy packs/soc.rego \
     -- python -m services.mock_soc.mcp_server
 ```
 
+The facts-only re-check defaults to the starter XGBoost model baked into the image, so the stack runs without
+a GPU. For an LLM re-check, `ollama pull qwen2.5:3b` on the host and set `TRUSTGATE_RECHECK_BACKEND=ollama`.
+
 | Service | Network | Holds |
 |---|---|---|
 | agent | agent-net | LLM API key only; egress limited to the proxy and the LLM API |
-| ingest | core-net | Threat-intel API keys |
-| trustgate-proxy | agent-net + core-net | Tool credentials and analyst token hashes (Docker secrets); the only bridge between agent and tools |
+| ingest | core-net + egress-net, port 8081 | Threat-intel API keys; the ingest token (only the SIEM may post alerts) |
+| trustgate-proxy | agent-net + analyst-net + core-net, port 8080 | Tool credentials and analyst token hashes (Docker secrets); the only bridge between agent and tools |
 | mcp-gateway | agent-net + core-net | Tool pins; proxies MCP servers |
 | opa | core-net | Rego policies and pack data |
-| detector | core-net | Prompt Guard 2 and LLM Guard weights; scores only |
+| detector | core-net + egress-net | Prompt Guard 2 and LLM Guard weights; scores only |
 | redis / postgres | core-net | Rate limits, queue, audit |
 | mock-soc | core-net | Sandbox state; email goes to a local outbox only |
-| dashboard | core-net, port 8501 published | Read access to the audit DB |
+| dashboard | analyst-net + core-net, port 8501 | Read access to the audit DB |
+
+Published ports bind to `127.0.0.1` unless `TRUSTGATE_BIND_ADDR` says otherwise.
 
 ---
 

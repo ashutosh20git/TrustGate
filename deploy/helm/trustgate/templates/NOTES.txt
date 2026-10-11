@@ -1,0 +1,20 @@
+TrustGate {{ .Chart.AppVersion }} is installed (mode: {{ .Values.gate.mode }}, pack: {{ .Values.gate.policy }}).
+
+Point your agent's tool calls at the proxy (in-cluster):
+  http://{{ include "trustgate.fullname" . }}-proxy.{{ .Release.Namespace }}.svc:{{ .Values.proxy.service.port }}/v1/tools/<tool>
+
+Your SIEM posts alerts to ingest with the ingest token:
+  POST http://{{ include "trustgate.fullname" . }}-ingest.{{ .Release.Namespace }}.svc:{{ .Values.ingest.service.port }}/v1/alerts
+  Authorization: Bearer <secrets/ingest_token.txt>
+
+Analysts open the dashboard and paste their own token:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "trustgate.fullname" . }}-dashboard 8501
+{{- if .Values.mockSoc.enabled }}
+
+NOTE: actions run against the bundled mock SOC. Connect your real tools before
+enforcing (docs/SELF_HOSTING.md, "Connecting your SOC tools").
+{{- end }}
+{{- if eq .Values.gate.recheckBackend "xgboost" }}
+NOTE: the facts-only re-check uses the starter XGBoost model trained on synthetic
+alerts. Retrain it on your own labelled alerts (scripts/train_recheck.py).
+{{- end }}

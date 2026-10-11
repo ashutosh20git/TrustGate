@@ -1,0 +1,7 @@
+apiVersion: v2
+name: trustgate
+description: Deterministic action gate for AI SOC agents (proxy, ingest, detector, OPA, dashboard)
+type: application
+version: 0.1.0
+appVersion: "2.4"
+keywords: [security, soc, ai-agents, prompt-injection, opa]

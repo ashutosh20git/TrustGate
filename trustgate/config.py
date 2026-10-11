@@ -95,6 +95,12 @@ class Settings:
     # Services
     proxy_url: str = field(default_factory=lambda: _env("TRUSTGATE_PROXY_URL", "http://localhost:8080"))
     ingest_url: str = field(default_factory=lambda: _env("TRUSTGATE_INGEST_URL", "http://localhost:8081"))
+    # Bearer token for the ingest API (SIEM -> ingest). Alerts carry typed facts, so
+    # an unauthenticated poster could forge them. Unset = ingest refuses alerts.
+    ingest_token: str | None = field(default_factory=lambda: _env("TRUSTGATE_INGEST_TOKEN") or _read_secret("ingest_token"))
+    # The SOC connector the proxy executes allowed actions with: "module:Class",
+    # constructed as Class(base_url, token). See docs/SELF_HOSTING.md.
+    soc_client: str = field(default_factory=lambda: _env("TRUSTGATE_SOC_CLIENT", "services.mock_soc.client:MockSOCClient"))
     mock_soc_url: str = field(default_factory=lambda: _env("MOCK_SOC_URL", "http://localhost:8090"))
     mock_soc_token: str | None = field(default_factory=lambda: _env("MOCK_SOC_TOKEN") or _read_secret("mock_soc_token"))
 

@@ -64,8 +64,9 @@ def main() -> None:
                           "facts": alert.facts.model_dump(mode="json"),
                           "evidence_flags": {e.id: e.flags for e in alert.evidence}}, indent=2))
         return
+    headers = {"Authorization": f"Bearer {settings.ingest_token}"} if settings.ingest_token else {}
     for alert in alerts:
-        resp = httpx.post(f"{settings.ingest_url}/v1/alerts", json=alert, timeout=30)
+        resp = httpx.post(f"{settings.ingest_url}/v1/alerts", json=alert, headers=headers, timeout=30)
         resp.raise_for_status()
         print("seeded", alert["alert_id"])
 

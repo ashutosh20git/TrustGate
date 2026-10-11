@@ -17,11 +17,13 @@ from typing import Any
 
 import httpx
 import structlog
-from sqlalchemy import JSON, Column, Text
+from sqlalchemy import JSON, Column, Text, text
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 from trustgate.config import Settings
 from trustgate.models import Alert, GateDecision, ProposedAction
+
+_AUDIT_CHAIN_LOCK = 0x7472757374  # pg advisory lock key for the audit hash chain
 
 log = structlog.get_logger("trustgate.audit")
 
@@ -169,6 +171,10 @@ class Store:
     def audit(self, kind: str, *, alert_id: str | None = None, tool: str | None = None,
               decision: GateDecision | None = None, details: dict[str, Any] | None = None) -> AuditRecord:
         with self._audit_lock, self.session() as s:
+            if self.engine.dialect.name == "postgresql":
+                # Several proxy replicas share one chain: serialise appends across
+                # processes, or two would link to the same previous record.
+                s.exec(text("SELECT pg_advisory_xact_lock(:k)").bindparams(k=_AUDIT_CHAIN_LOCK))
             last = s.exec(select(AuditRecord).order_by(AuditRecord.seq.desc()).limit(1)).first()
             rec = AuditRecord(kind=kind, alert_id=alert_id, tool=tool, details=details or {},
                               prev_hash=last.record_hash if last else "")

@@ -1,0 +1,8 @@
+# Values for CI rendering only. Never use these tokens.
+postgresql: {password: ci-only}
+secrets:
+  ingestToken: ci-only
+  analystTokens: "ci:0000000000000000000000000000000000000000000000000000000000000000"
+  mockSocToken: ci-only
+ingress: {enabled: true, dashboardHost: trustgate.ci.invalid}
+networkPolicy: {proxyFrom: [{namespaceSelector: {matchLabels: {team: soc}}}]}
