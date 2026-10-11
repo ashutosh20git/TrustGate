@@ -19,7 +19,7 @@
       "3": 20
     },
     "t1_evidence": {
-      "description": "Deterministic minimum evidence for any T1 (security-reducing) action, whatever the re-check model says. core_facts must be known; when a source lists costly_support, at least one of those conditions must hold (facts an attacker cannot buy cheaply for a fresh campaign).",
+      "description": "Deterministic minimum evidence for any T1 (security-reducing) action, whatever the re-check model says. core_facts must be known; when a source lists costly_support, at least one of those conditions must hold (facts an attacker cannot buy cheaply for a fresh campaign). At least one cited typed fact must meet a benign_support condition.",
       "core_facts": {
         "email": [
           "dmarc_pass"
@@ -42,7 +42,49 @@
             "value": 3
           }
         ]
-      }
+      },
+      "benign_support": [
+        {
+          "fact": "spf_pass",
+          "op": "==",
+          "value": true
+        },
+        {
+          "fact": "dkim_pass",
+          "op": "==",
+          "value": true
+        },
+        {
+          "fact": "dmarc_pass",
+          "op": "==",
+          "value": true
+        },
+        {
+          "fact": "url_reputation",
+          "op": "==",
+          "value": "clean"
+        },
+        {
+          "fact": "sandbox_verdict",
+          "op": "==",
+          "value": "clean"
+        },
+        {
+          "fact": "ip_abuse_score",
+          "op": "<",
+          "value": 25
+        },
+        {
+          "fact": "sender_prior_messages",
+          "op": ">=",
+          "value": 1
+        },
+        {
+          "fact": "sender_domain_age_days",
+          "op": ">=",
+          "value": 30
+        }
+      ]
     }
   }
 }

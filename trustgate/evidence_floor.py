@@ -11,6 +11,9 @@ The facts-only re-check is a model, and it can be wrong in two silent ways:
   clean reputation. A re-check over only those facts says benign. For sources
   that list costly_support, a T1 action also needs at least one fact a fresh
   campaign cannot buy cheaply (for email: the sender has delivered mail before).
+* Citations that prove nothing. Citing any facts.* name used to be enough, even
+  one unrelated to "benign" (facts.ioc_ips). At least one cited fact must now
+  actually support benign (benign_support conditions).
 
 Config lives in packs/floor.json ("t1_evidence") so no pack can loosen it.
 """
@@ -34,6 +37,11 @@ class T1Evidence:
     costly_required: bool = False
     costly_support: list[str] = field(default_factory=list)
     enrichment_failed: bool = False
+    cited_support: list[str] = field(default_factory=list)
+
+    @property
+    def cited_support_ok(self) -> bool:
+        return bool(self.cited_support)
 
     @property
     def costly_ok(self) -> bool:
@@ -47,14 +55,29 @@ class T1Evidence:
             out.append(f"T1: core facts unknown: {', '.join(self.unknown_core)}")
         if not self.costly_ok:
             out.append("T1: no fact the attacker cannot cheaply control supports benign")
+        if not self.cited_support_ok:
+            out.append("T1: no cited typed fact supports benign")
         return out
 
     def policy_input(self) -> dict[str, Any]:
         return {"unknown_core": self.unknown_core, "costly_support": self.costly_support,
-                "costly_ok": self.costly_ok, "enrichment_failed": self.enrichment_failed}
+                "costly_ok": self.costly_ok, "enrichment_failed": self.enrichment_failed,
+                "cited_support": self.cited_support, "cited_support_ok": self.cited_support_ok}
 
 
-def t1_evidence(facts: TypedFacts, source: str, config: dict[str, Any] | None) -> T1Evidence:
+def _holds(facts: TypedFacts, cond: dict[str, Any]) -> bool:
+    value = getattr(facts, cond["fact"], None)
+    op = _OPS.get(cond.get("op", ">="))
+    if value is None or op is None:
+        return False
+    try:
+        return bool(op(value, cond["value"]))
+    except TypeError:
+        return False
+
+
+def t1_evidence(facts: TypedFacts, source: str, config: dict[str, Any] | None,
+                cited: list[str] | None = None) -> T1Evidence:
     config = config or {}
     core = config.get("core_facts", {}).get(source, [])
     conditions = config.get("costly_support", {}).get(source, [])
@@ -63,13 +86,10 @@ def t1_evidence(facts: TypedFacts, source: str, config: dict[str, Any] | None) -
         if getattr(facts, name, None) in _UNKNOWN:
             result.unknown_core.append(name)
     for cond in conditions:
-        value = getattr(facts, cond["fact"], None)
-        op = _OPS.get(cond.get("op", ">="))
-        if value is None or op is None:
-            continue
-        try:
-            if op(value, cond["value"]):
-                result.costly_support.append(f"{cond['fact']} {cond.get('op', '>=')} {cond['value']}")
-        except TypeError:
-            continue
+        if _holds(facts, cond):
+            result.costly_support.append(f"{cond['fact']} {cond.get('op', '>=')} {cond['value']}")
+    cited_facts = {c.split(".", 1)[1] for c in (cited or []) if c.startswith("facts.")}
+    for cond in config.get("benign_support", []):
+        if cond["fact"] in cited_facts and _holds(facts, cond):
+            result.cited_support.append(cond["fact"])
     return result

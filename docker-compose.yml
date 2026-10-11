@@ -17,6 +17,8 @@ networks:
 secrets:
   mock_soc_token:
     file: ./secrets/mock_soc_token.txt
+  analyst_tokens:  # name:sha256(token) per line; only the proxy verifies approvals
+    file: ./secrets/analyst_tokens.txt
 
 volumes:
   pgdata:
@@ -97,7 +99,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       OPA_URL: http://opa:8181
       MOCK_SOC_URL: http://mock-soc:8090
-    secrets: [mock_soc_token]
+    secrets: [mock_soc_token, analyst_tokens]
     networks: [agent-net, core-net]
     ports: ["8080:8080"]
     depends_on:

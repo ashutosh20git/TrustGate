@@ -50,8 +50,9 @@ tab_queue, tab_metrics, tab_audit, tab_pins = st.tabs(["Escalation queue", "Metr
 
 with tab_queue:
     st.subheader("Open escalations")
-    analyst = st.text_input("Analyst", value="analyst@corp.example")
-    second = st.text_input("Second analyst (required to approve T2/T3)", value="")
+    token = st.text_input("Your analyst token", type="password")
+    second = st.text_input("Second analyst's token (required to approve T2/T3)", type="password")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
     items = proxy_get("/v1/escalations?status=open") or []
     if not items:
         st.info("No open escalations.")
@@ -66,17 +67,20 @@ with tab_queue:
             reason = st.text_input("Decision reason", key=f"r-{esc['id']}")
             c1, c2 = st.columns(2)
             if c1.button("Approve", key=f"a-{esc['id']}"):
-                resp = httpx.post(f"{PROXY}/v1/escalations/{esc['id']}/approve",
-                                  json={"analyst": analyst, "reason": reason, "second_analyst": second or None},
+                resp = httpx.post(f"{PROXY}/v1/escalations/{esc['id']}/approve", json={"reason": reason},
+                                  headers={**headers, **({"X-Second-Analyst-Token": second} if second else {})},
                                   timeout=10)
-                if resp.status_code == 409:
+                if resp.status_code >= 400:
                     st.error(resp.json().get("detail", "approval refused"))
                 else:
                     st.rerun()
             if c2.button("Reject", key=f"x-{esc['id']}"):
-                httpx.post(f"{PROXY}/v1/escalations/{esc['id']}/reject",
-                           json={"analyst": analyst, "reason": reason}, timeout=10)
-                st.rerun()
+                resp = httpx.post(f"{PROXY}/v1/escalations/{esc['id']}/reject", json={"reason": reason},
+                                  headers=headers, timeout=10)
+                if resp.status_code >= 400:
+                    st.error(resp.json().get("detail", "rejection refused"))
+                else:
+                    st.rerun()
 
 with tab_metrics:
     if metrics:

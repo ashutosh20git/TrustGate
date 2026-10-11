@@ -54,6 +54,8 @@ def clean_proposal(alert: Alert) -> ProposedAction:
         return ProposedAction(alert_id=alert.alert_id, verdict="malicious", tool="escalate",
                               args={"reason": "facts indicate malicious"}, cited_evidence=["facts.dmarc_pass"],
                               rationale="facts indicate malicious")
+    support = {"email": "facts.dmarc_pass", "network": "facts.ip_abuse_score",
+               "endpoint": "facts.sandbox_verdict", "auth": "facts.ip_abuse_score"}[alert.source]
     return ProposedAction(alert_id=alert.alert_id, verdict="benign", tool="close_alert",
-                          args={"reason": "facts support benign"}, cited_evidence=["facts.dmarc_pass"],
+                          args={"reason": "facts support benign"}, cited_evidence=[support],
                           rationale="facts support benign")

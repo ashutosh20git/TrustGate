@@ -17,7 +17,7 @@ python -m spacy download en_core_web_lg
 # OPA binary (needed for the gate): downloaded to .tools/ during the build, or:
 #   curl -L -o .tools/opa.exe https://github.com/open-policy-agent/opa/releases/latest/download/opa_windows_amd64.exe
 
-pytest                                   # 89 tests, each mapped to a silent-failure fix
+pytest                                   # 98 tests, each mapped to a silent-failure fix
 python -m eval.run --configs A,B,C,D     # attack suite A-D + the gate-only-catches headline
 python scripts/seed_demo.py --local      # show the poisoned email being split and flagged
 ```
@@ -73,7 +73,7 @@ Two attacks a detector can miss and the gate still stops:
 5. **Safe output and audit.** Schema-constrained verdicts that must cite evidence IDs, quarantined attacker text in the UI, and an audit record for every decision.
 6. **Fail-closed watchdog.** Any error or timeout blocks T1–T3 actions and escalates them.
 
-The 24 silent-failure fixes from the project dossier (section 11) carry over unchanged. v2.1 adds ten more, found in TrustGate's own code ([below](#v21-silent-failures-fixed-in-trustgate-itself)).
+The 24 silent-failure fixes from the project dossier (section 11) carry over unchanged. v2.1 and v2.2 add thirteen more, found in TrustGate's own code ([below](#v21-silent-failures-fixed-in-trustgate-itself)).
 
 | Tier | Tools | Checks before the action runs |
 |---|---|---|
@@ -98,6 +98,16 @@ Each was a way for an attack to get through, or for the gate to stop working, wi
 | 8 | Rate limits were per tool, so a campaign of individually clean-looking emails was judged one at a time | T1 actions are also limited per sender domain (10 per hour by default). Shared mail providers (gmail.com, outlook.com, ...) are exempt; fresh senders there are caught per address by fix 1 | `packs/*.json` `campaign_rate_limits` |
 | 9 | Notes the agent wrote after reading manipulated evidence were stored as plain text | Agent-written notes on a flagged alert are stored with an untrusted-provenance prefix naming the flagged evidence | `Gate._t0` |
 | 10 | Monitor mode logged "would block" but gave no way to tell when enforcing was safe | Per-tool rollout report: decisions, would-block rate, fail-closed count, top reasons, ready flag (`GET /v1/rollout`, dashboard Metrics tab) | `Store.rollout_report` |
+
+### v2.2: three more, found while checking the v2.1 fixes
+
+Tests: `tests/test_silent_failures_v22.py`.
+
+| # | Silent failure | Fix | Where |
+|---|---|---|---|
+| 11 | The approve and re-pin endpoints had no authentication, and analyst names were request text. The proxy shares agent-net with the agent and is published on 8080, so a hijacked agent could approve its own escalation with two made-up names, defeating fix 3 | Approvals, rejections and re-pins need an analyst bearer token; the identity comes from the token (`Authorization`, plus `X-Second-Analyst-Token` for T2/T3). The proxy holds only SHA-256 hashes (Docker secret `analyst_tokens`, from `scripts/init_secrets.py`); with none configured, approvals are refused | `trustgate/analysts.py`, `services/proxy/main.py` |
+| 12 | A T1 action only had to cite some `facts.*` name, even one unrelated to "benign" such as `facts.ioc_ips` | At least one cited typed fact must meet a `benign_support` condition (DMARC pass, clean URL or sandbox, low abuse score, known sender, ...), in code and in the Rego floor | `trustgate/evidence_floor.py`, `packs/floor.json`, `packs/floor.rego` |
+| 13 | If an approved action's tool raised, the escalation stayed open, nothing was audited and the proxy returned a bare 500 | The escalation is closed as `failed` (the tool may have partly run, so no silent retry), an `execution_failed` audit record is written, and the proxy returns 502 with the error type only | `Gate.resolve_escalation` |
 
 ### What v2 adds
 
@@ -337,7 +347,7 @@ TrustGate/
 ├── examples/email_assistant.py    # second agent protected in a few lines
 ├── eval/                          # payloads, inject, build_attachments, generate_alerts, configs, sim, metrics, run
 ├── scripts/                       # init_secrets, seed_demo, train_recheck, check_model_pins, ci_eval_guard
-├── tests/                         # 89 tests, each mapped to a silent-failure fix
+├── tests/                         # 98 tests, each mapped to a silent-failure fix
 ├── .tools/opa.exe                 # OPA binary (git-ignored)
 ├── DISCLOSURE.md · PLACEHOLDERS.md · README.md
 ```
@@ -350,7 +360,7 @@ Offline is the [quickstart](#quickstart-offline-no-keys) above. For the live sta
 
 ```bash
 cp .env.example .env            # fill in keys; see PLACEHOLDERS.md
-python scripts/init_secrets.py  # writes secrets/mock_soc_token.txt
+python scripts/init_secrets.py  # writes secrets/mock_soc_token.txt and analyst token hashes; prints each analyst token once
 ollama pull qwen2.5:3b          # host-side re-check model (set TRUSTGATE_RECHECK_MODEL)
 
 docker compose up --build       # proxy, ingest, detector, OPA, Redis, Postgres, mock-soc, dashboard
@@ -369,7 +379,7 @@ python -m trustgate.mcp.gateway --server-name mock-soc --policy packs/soc.rego \
 |---|---|---|
 | agent | agent-net | LLM API key only; egress limited to the proxy and the LLM API |
 | ingest | core-net | Threat-intel API keys |
-| trustgate-proxy | agent-net + core-net | Tool credentials (Docker secrets); the only bridge between agent and tools |
+| trustgate-proxy | agent-net + core-net | Tool credentials and analyst token hashes (Docker secrets); the only bridge between agent and tools |
 | mcp-gateway | agent-net + core-net | Tool pins; proxies MCP servers |
 | opa | core-net | Rego policies and pack data |
 | detector | core-net | Prompt Guard 2 and LLM Guard weights; scores only |
