@@ -99,6 +99,20 @@
           "icloud.com",
           "proton.me",
           "protonmail.com"
+        ],
+        "shared_url_domains": [
+          "google.com",
+          "googleusercontent.com",
+          "microsoft.com",
+          "sharepoint.com",
+          "office.com",
+          "live.com",
+          "dropbox.com",
+          "box.com",
+          "github.com",
+          "amazonaws.com",
+          "cloudfront.net",
+          "zoom.us"
         ]
       },
       "undo": {

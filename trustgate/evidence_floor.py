@@ -11,6 +11,9 @@ The facts-only re-check is a model, and it can be wrong in two silent ways:
   clean reputation. A re-check over only those facts says benign. For sources
   that list costly_support, a T1 action also needs at least one fact a fresh
   campaign cannot buy cheaply (for email: the sender has delivered mail before).
+* A compromised real account. Sender history is costly to fake, but a hijacked
+  mailbox has it. When the known sender behaves unusually (a Reply-To on another
+  domain, its first link or attachment, a new sending IP) history stops counting.
 * Citations that prove nothing. Citing any facts.* name used to be enough, even
   one unrelated to "benign" (facts.ioc_ips). At least one cited fact must now
   actually support benign (benign_support conditions).
@@ -38,6 +41,7 @@ class T1Evidence:
     costly_support: list[str] = field(default_factory=list)
     enrichment_failed: bool = False
     cited_support: list[str] = field(default_factory=list)
+    sender_anomalies: list[str] = field(default_factory=list)
 
     @property
     def cited_support_ok(self) -> bool:
@@ -53,7 +57,10 @@ class T1Evidence:
             out.append("T1: a threat-intel lookup failed; facts are missing, not clean")
         if self.unknown_core:
             out.append(f"T1: core facts unknown: {', '.join(self.unknown_core)}")
-        if not self.costly_ok:
+        if not self.costly_ok and self.sender_anomalies:
+            out.append("T1: the sender has history, but is behaving unusually ("
+                       + ", ".join(self.sender_anomalies) + "): a compromised account looks like this")
+        elif not self.costly_ok:
             out.append("T1: no fact the attacker cannot cheaply control supports benign")
         if not self.cited_support_ok:
             out.append("T1: no cited typed fact supports benign")
@@ -85,8 +92,9 @@ def t1_evidence(facts: TypedFacts, source: str, config: dict[str, Any] | None,
     for name in core:
         if getattr(facts, name, None) in _UNKNOWN:
             result.unknown_core.append(name)
+    result.sender_anomalies = [name for name in config.get("costly_negated_by", []) if getattr(facts, name, None) is True]
     for cond in conditions:
-        if _holds(facts, cond):
+        if _holds(facts, cond) and not (result.sender_anomalies and cond["fact"].startswith("sender_")):
             result.costly_support.append(f"{cond['fact']} {cond.get('op', '>=')} {cond['value']}")
     cited_facts = {c.split(".", 1)[1] for c in (cited or []) if c.startswith("facts.")}
     for cond in config.get("benign_support", []):

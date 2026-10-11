@@ -38,7 +38,8 @@ from trustgate.config import NotConfigured, Settings
 from trustgate.evidence_floor import t1_evidence
 from trustgate.ingest.decode import SCAN_TEXT_LIMIT
 from trustgate.models import Alert, GateDecision, ProposedAction, Trust, TypedFacts, Verdict
-from trustgate.output_scan import OutputScanner, ScanResult
+from trustgate.ingest.decode import rot13
+from trustgate.output_scan import OutputScanner, ScanResult, regex_findings
 from trustgate.policy_client import PolicyPack, load_pack, policy_client
 from trustgate.provenance import stamp_for
 from trustgate.ratelimit import rate_limiter
@@ -430,12 +431,12 @@ class Gate:
         if not self.limiter.hit(f"{self.pack.name}:t{int(tier)}:{action.tool}", self.pack.rate_limit(tier)):
             raise _Escalate(["rate limit"])
         campaign = self.pack.campaign_limit(tier)
-        domain = alert.facts.sender_domain
-        if campaign is not None and domain and domain not in self.pack.shared_sender_domains:
+        if campaign is not None:
             limit, window_s = campaign
-            if not self.limiter.hit(f"{self.pack.name}:t{int(tier)}:sender:{domain}", limit, window_s):
-                raise _Escalate([f"campaign rate limit: over {limit} T{int(tier)} actions for one sender "
-                                 f"domain in {window_s // 60} min"])
+            for kind, key in self._campaign_keys(alert.facts):
+                if not self.limiter.hit(f"{self.pack.name}:t{int(tier)}:{kind}:{key}", limit, window_s):
+                    raise _Escalate([f"campaign rate limit: over {limit} T{int(tier)} actions for one {kind} "
+                                     f"in {window_s // 60} min"])
         decision.reasons.append(f"T{int(tier)} checks passed")
         return decision
 
@@ -495,12 +496,16 @@ class Gate:
         if any(len(text) > SCAN_TEXT_LIMIT for text in fields.values()):
             raise _Escalate([f"outbound payload over {SCAN_TEXT_LIMIT} characters cannot be fully scanned"])
         raw_ids = sorted({eid for text in fields.values() for eid in value_match.raw_evidence_in(text, alert)})
+        restated = sorted({eid for text in fields.values() for eid in value_match.restated_evidence_in(text, alert)}
+                          - set(raw_ids))
         scan, hidden = self._outbound_scan(fields)  # raises if no backend: T3 fails closed
         decision.output_findings = scan.findings
-        policy_input.update(recipient=recipient, contains_raw_evidence=bool(raw_ids),
+        policy_input.update(recipient=recipient, contains_raw_evidence=bool(raw_ids or restated),
                             output_entities=sorted(set(scan.entities) | set(hidden)))
         if raw_ids:
             raise _Escalate(["raw evidence in outbound payload"], raw_ids)
+        if restated:
+            raise _Escalate(["untrusted evidence restated in outbound payload"], restated)
         if scan.blocked_entities:
             raise _Escalate([f"sensitive data in outbound payload: {', '.join(scan.blocked_entities)}"])
         if hidden:
@@ -517,6 +522,17 @@ class Gate:
             args[body_arg] = f"{args[body_arg]}\n\n{stamp}"
             decision.redacted_args = args
             decision.reasons.append("provenance stamp added")
+
+    def _campaign_keys(self, facts: TypedFacts) -> list[tuple[str, str]]:
+        """What links alerts of one campaign even across sender domains: the sender domain, the
+        link domains, the attachment hashes and near-duplicate body keys. Shared providers are skipped."""
+        keys: list[tuple[str, str]] = []
+        if facts.sender_domain and facts.sender_domain not in self.pack.shared_sender_domains:
+            keys.append(("sender domain", facts.sender_domain))
+        keys += [("link domain", d) for d in facts.url_domains if d not in self.pack.shared_url_domains]
+        keys += [("attachment", h) for h in facts.ioc_hashes]
+        keys += [("near-duplicate body", b) for b in facts.content_bands]
+        return keys
 
     def _expiry_scope(self, action: ProposedAction) -> dict[str, Any]:
         spec = self.pack.expiry_spec(action.tool)
@@ -536,14 +552,20 @@ class Gate:
         non-allowed entities found only after decoding). Encoded data cannot be redacted in
         place, so anything sensitive hidden that way escalates instead."""
         scan = self.output_scanner.scan(fields)
+        seen = {(f.arg, f.entity) for f in scan.findings}
         decoded = {arg: value_match.outbound_view(text) for arg, text in fields.items()}
         changed = {arg: text for arg, text in decoded.items() if text != fields[arg]}
-        if not changed:
-            return scan, []
-        seen = {(f.arg, f.entity) for f in scan.findings}
-        hidden = sorted({f.entity for f in self.output_scanner.scan(changed).findings
-                         if f.action != "allow" and (f.arg, f.entity) not in seen})
-        return scan, hidden
+        hidden = {f.entity for f in (self.output_scanner.scan(changed).findings if changed else [])
+                  if f.action != "allow" and (f.arg, f.entity) not in seen}
+        # ROT13 never reads as English for a key, so it is checked for secrets by pattern only
+        # (running name detection over ROT13 gibberish would invent people and places).
+        for arg, text in decoded.items():
+            plain = {entity for entity, *_ in regex_findings(text)}  # e.g. PAN/IBAN shapes survive ROT13
+            for entity, *_ in regex_findings(rot13(text)):
+                if (entity not in plain and self.output_scanner.action_for(entity) != "allow"
+                        and (arg, entity) not in seen):
+                    hidden.add(entity)
+        return scan, sorted(hidden)
 
     @staticmethod
     def _citation_exists(citation: str, alert: Alert) -> bool:

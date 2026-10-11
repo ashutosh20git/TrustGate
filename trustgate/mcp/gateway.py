@@ -12,7 +12,11 @@ not change. The gateway:
   * treats every tool *response* as untrusted: text is wrapped in a random
     delimiter and scanned by the IOC detector (a hit tags the alert as an
     AI-evasion attempt), and a response whose shape drifts from the tool's
-    baseline is withheld and the tool disabled until re-pinned.
+    baseline is withheld, the tool disabled until re-pinned, and the action that
+    call performed rolled back;
+  * runs reverse actions (unblock, reopen...) on the upstream server for
+    analyst reverts and automatic rollback. Reverse tools are never listed to
+    the agent and refuse agent calls.
 """
 
 from __future__ import annotations
@@ -37,7 +41,7 @@ from pydantic import ValidationError
 from trustgate import __version__
 from trustgate.config import Settings
 from trustgate.detector import Detector
-from trustgate.gate import ESCALATED_MESSAGE, RESERVED_ARGS, Gate
+from trustgate.gate import ESCALATED_MESSAGE, RESERVED_ARGS, Gate, ToolConfigError
 from trustgate.mcp.pinning import ToolPinRegistry
 from trustgate.models import IOCSignal, ProposedAction
 from trustgate.render import render_untrusted_result
@@ -71,7 +75,29 @@ class Gateway:
         self.server_name = server_name
         self.gate = gate
         self.registry = registry
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self.undo_names = {spec["tool"] for spec in gate.pack.data.get("undo", {}).values() if spec.get("tool")}
+        for name in self.undo_names:
+            gate.undo_tools.setdefault(self.gate_name(name), self._undo_executor(name))
 
+    def _undo_executor(self, name: str):
+        """A reverse action run on the upstream server, from a worker thread (gate.revert is sync)."""
+
+        def run(alert_id: str = "", **args: Any) -> Any:
+            if self._loop is None or self._loop.is_closed():
+                raise ToolConfigError("gateway not serving; cannot reach the upstream server")
+            pin = self.gate.store.get_pin(self.server_name, name)
+            if pin is None or not self.registry.is_callable(self.server_name, name):
+                raise ToolConfigError(f"reverse action {name} is not pinned on {self.server_name}")
+            if "alert_id" in (pin.input_schema or {}).get("properties", {}):
+                args = {"alert_id": alert_id, **args}
+            future = asyncio.run_coroutine_threadsafe(self.upstream.call_tool(name, args), self._loop)
+            result = future.result(timeout=30)
+            if getattr(result, "is_error", False):
+                raise RuntimeError(f"upstream {name} returned an error")
+            return result
+
+        return run
     def gate_name(self, tool: str) -> str:
         return f"{self.server_name}/{tool}"
 
@@ -91,6 +117,8 @@ class Gateway:
         results = await asyncio.to_thread(self.registry.register, self.server_name, list(tools.values()))
         listed: list[types.Tool] = []
         for res in results:
+            if res.name in self.undo_names:
+                continue  # reverse actions are for analysts and rollback, never the agent
             if not res.callable:
                 log.warning("trustgate.mcp.tool_hidden", tool=res.name, status=res.status, reasons=res.reasons)
                 continue
@@ -100,8 +128,11 @@ class Gateway:
         return types.ListToolsResult(tools=listed)
 
     async def call_tool(self, ctx, params) -> types.CallToolResult:
+        self._loop = asyncio.get_running_loop()
         name = params.name
         arguments = dict(params.arguments or {})
+        if name in self.undo_names:
+            return _error(f"{ESCALATED_MESSAGE} (reverse actions are run by analysts, not agents)")
         live = (await self._upstream_tools()).get(name)
         pinned_ok = False
         if live is not None:
@@ -128,11 +159,13 @@ class Gateway:
         await asyncio.to_thread(self.gate.store.audit, "execution", alert_id=action.alert_id, tool=action.tool,
                                 details={"via": "mcp_gateway", "monitor": not decision.enforced,
                                          "would_block": decision.would_block, "audit_id": decision.audit_id})
+        record = None
         if not bool(getattr(result, "is_error", False)):
-            await asyncio.to_thread(self.gate._record_action, action, decision.tier, call_args, via="mcp_gateway")
-        return await asyncio.to_thread(self._screen_result, name, action.alert_id, result)
+            record = await asyncio.to_thread(self.gate._record_action, action, decision.tier, call_args,
+                                             via="mcp_gateway")
+        return await asyncio.to_thread(self._screen_result, name, action.alert_id, result, record)
 
-    def _screen_result(self, name: str, alert_id: str, result: Any) -> types.CallToolResult:
+    def _screen_result(self, name: str, alert_id: str, result: Any, record: Any = None) -> types.CallToolResult:
         """Tool output is attacker-reachable data: check its shape, scan it, label it."""
         content = list(getattr(result, "content", []) or [])
         structured = getattr(result, "structured_content", None)
@@ -144,6 +177,15 @@ class Gateway:
                 sorted(structured) if isinstance(structured, dict) else None)
             if drift:
                 log.warning("trustgate.mcp.response_drift", tool=source, reasons=drift)
+                if record is not None:  # the call already acted: undo what it did
+                    try:
+                        self.gate.revert(record.id, by="trustgate:auto",
+                                         reason=f"response from {source} changed shape after the call")
+                    except (KeyError, ToolConfigError) as exc:
+                        self.gate.store.audit("revert", alert_id=alert_id or None, tool=source,
+                                              details={"action_id": record.id, "status": "not_reverted",
+                                                       "by": "trustgate:auto",
+                                                       "reason": f"response drift ({type(exc).__name__})"})
                 return _error(f"TrustGate withheld the response from {source}: its shape changed since the "
                               "tool was pinned, so the tool is disabled until an analyst re-pins it.")
 

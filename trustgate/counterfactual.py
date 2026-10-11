@@ -33,6 +33,7 @@ _BENIGN_TARGET = {"==": lambda v: v, ">=": lambda v: v, ">": lambda v: v + 1, "<
 def _candidates(config: dict[str, Any], source: str) -> dict[str, Any]:
     """fact -> the value that would support benign, from the floor's own conditions."""
     out: dict[str, Any] = {"enrichment_failed": False}
+    out.update({name: False for name in config.get("costly_negated_by", [])})  # sender behaving normally
     conditions = list(config.get("benign_support", [])) + list(config.get("costly_support", {}).get(source, []))
     for cond in conditions:
         target = _BENIGN_TARGET.get(cond.get("op", ">="))

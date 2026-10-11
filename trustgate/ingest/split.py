@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from trustgate.config import Settings
 from trustgate.detector import Detector
 from trustgate.ingest.attachments import AttachmentResult, parse_attachment
+from trustgate.ingest.campaign import minhash_bands, registered_domain, url_domains
 from trustgate.ingest.decode import sanitise
 from trustgate.ingest.enrich import EnrichmentReport, ThreatIntel
 from trustgate.ingest.parsers.email import ParsedEmail, live_auth, parse_email
@@ -166,6 +167,11 @@ class Splitter:
             if parsed is not None:
                 urls.extend(parsed.urls)
                 sender_domain = parsed.from_domain
+                if parsed.reply_to_domain and sender_domain and facts.get("reply_to_mismatch") is None:
+                    facts["reply_to_mismatch"] = (registered_domain(parsed.reply_to_domain)
+                                                  != registered_domain(sender_domain))
+                elif sender_domain and facts.get("reply_to_mismatch") is None:
+                    facts["reply_to_mismatch"] = False
                 if sender_domain and facts.get("sender_domain") is None:
                     try:
                         facts["sender_domain"] = TypedFacts.model_validate({"sender_domain": sender_domain}).sender_domain
@@ -199,6 +205,15 @@ class Splitter:
             facts["attachment_has_macros"] = any(a.has_macros for a in attachments)
             facts["attachment_has_qr"] = any(a.has_qr for a in attachments)
             urls.extend(u for a in attachments for u in a.urls)  # QR links get URL reputation too
+
+        # Campaign keys: link domains and near-duplicate body keys (see ingest/campaign.py).
+        if urls and not facts.get("url_domains"):
+            facts["url_domains"] = url_domains(urls)
+        body = "\n".join(e.content for e in builder.items
+                         if e.field.startswith(("email.subject", "email.body", "fields."))
+                         or (e.field.startswith("attachment[") and not e.field.endswith((".filename", ".metadata"))))
+        if not facts.get("content_bands"):
+            facts["content_bands"] = minhash_bands(body)
 
         # Payload keys the registry does not know: untrusted evidence, counted.
         coverage = _label_coverage(raw, payload)

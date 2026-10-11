@@ -19,7 +19,7 @@
       "3": 20
     },
     "t1_evidence": {
-      "description": "Deterministic minimum evidence for any T1 (security-reducing) action, whatever the re-check model says. core_facts must be known; when a source lists costly_support, at least one of those conditions must hold (facts an attacker cannot buy cheaply for a fresh campaign). At least one cited typed fact must meet a benign_support condition.",
+      "description": "Deterministic minimum evidence for any T1 (security-reducing) action, whatever the re-check model says. core_facts must be known; when a source lists costly_support, at least one of those conditions must hold (facts an attacker cannot buy cheaply for a fresh campaign). At least one cited typed fact must meet a benign_support condition. Sender history stops counting as costly support when any costly_negated_by fact is true (a known sender behaving unusually: how a compromised account looks).",
       "core_facts": {
         "email": [
           "dmarc_pass"
@@ -84,6 +84,12 @@
           "op": ">=",
           "value": 30
         }
+      ],
+      "costly_negated_by": [
+        "reply_to_mismatch",
+        "sender_first_link",
+        "sender_first_attachment",
+        "sender_new_sending_ip"
       ]
     },
     "sequence": {
