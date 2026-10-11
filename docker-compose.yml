@@ -1,8 +1,12 @@
 # TrustGate v2 stack (blueprint page 7), ready to self-host. See docs/SELF_HOSTING.md.
 #
-#   python3 scripts/init_secrets.py --analyst alice --analyst bob   # also creates .env
-#   docker compose pull --ignore-pull-failures   # published image, if reachable
-#   docker compose up -d                         # builds locally if it was not pulled
+# This file works on its own, without the repo (it pulls the published image):
+#   curl -fsSLO https://raw.githubusercontent.com/ashutosh20git/TrustGate/main/docker-compose.yml
+#   curl -fsSL https://raw.githubusercontent.com/ashutosh20git/TrustGate/main/scripts/init_secrets.py \
+#       | python3 - --analyst alice        # writes .env and secrets/ here
+#   docker compose up -d
+# In a checkout, docker-compose.override.yml adds the local build:
+#   python3 scripts/init_secrets.py --analyst alice && docker compose up -d --build
 #
 # Networks keep the agent away from tool credentials and data:
 #   agent-net    the agent reaches only the proxy (and the LLM API)
@@ -16,11 +20,6 @@ name: trustgate
 
 x-service: &service
   image: ${TRUSTGATE_IMAGE:-ghcr.io/ashutosh20git/trustgate:latest}
-  build:
-    context: .
-    dockerfile: docker/Dockerfile
-    args:
-      EXTRAS: ${TRUSTGATE_EXTRAS:-standard}
   restart: unless-stopped
   env_file: [.env]
 
@@ -45,6 +44,7 @@ secrets:
     file: ./secrets/ingest_token.txt
 
 volumes:
+  packs:
   pgdata:
   ollama:
   ingest-data:
@@ -76,12 +76,24 @@ services:
       timeout: 3s
       retries: 10
 
+  # OPA evaluates the policy packs shipped in the TrustGate image, the same files
+  # the proxy reads, so the two never drift. Copied fresh on every start.
+  policy-packs:
+    image: ${TRUSTGATE_IMAGE:-ghcr.io/ashutosh20git/trustgate:latest}
+    user: "0"
+    restart: "no"
+    entrypoint: ["sh", "-c", "rm -rf /packs/* && cp /app/packs/*.rego /app/packs/*.json /packs/"]
+    volumes: [packs:/packs]
+    network_mode: none
+
   opa:
     image: openpolicyagent/opa:1.21.1
     restart: unless-stopped
     command: ["run", "--server", "--addr=0.0.0.0:8181", "/packs"]
-    volumes: [./packs:/packs:ro]
+    volumes: [packs:/packs:ro]
     networks: [core-net]
+    depends_on:
+      policy-packs: {condition: service_completed_successfully}
 
   # Facts-only re-check model, optional. The image ships a starter XGBoost model
   # (TRUSTGATE_RECHECK_BACKEND=xgboost). For Ollama: run it on the host (OLLAMA_HOST=

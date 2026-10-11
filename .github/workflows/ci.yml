@@ -57,8 +57,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Compose file is valid
-        run: touch .env && POSTGRES_PASSWORD=ci docker compose config -q
+      - name: Compose file is valid (with the checkout's build override, and standalone)
+        run: |
+          touch .env
+          POSTGRES_PASSWORD=ci docker compose config -q
+          mkdir standalone && cp docker-compose.yml standalone/ && touch standalone/.env
+          cd standalone && POSTGRES_PASSWORD=ci docker compose config -q
+          ! POSTGRES_PASSWORD=ci docker compose config | grep -q dockerfile
+
+      - name: Setup script runs without the repo
+        run: |
+          mkdir -p /tmp/noclone && cd /tmp/noclone
+          python3 -I - --analyst ci < "$GITHUB_WORKSPACE/scripts/init_secrets.py"
+          test -s .env && test -s secrets/ingest_token.txt && test -s secrets/analyst_tokens.txt
+          grep -q '^POSTGRES_PASSWORD=..' .env
 
       - uses: azure/setup-helm@v4
         with:

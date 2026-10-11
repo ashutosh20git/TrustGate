@@ -1,0 +1,18 @@
+# Loaded automatically next to docker-compose.yml in a checkout: lets
+# `docker compose up --build` build the image from this source tree, and is
+# used when the published image cannot be pulled. Not needed without the repo.
+x-build: &build
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+    args:
+      EXTRAS: ${TRUSTGATE_EXTRAS:-standard}
+
+services:
+  policy-packs: *build
+  mock-soc: *build
+  detector: *build
+  ingest: *build
+  trustgate-proxy: *build
+  dashboard: *build
+  agent: *build
