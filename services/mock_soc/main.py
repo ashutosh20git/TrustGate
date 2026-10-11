@@ -163,6 +163,35 @@ def create_app(database_url: str | None = None, token: str | None = None) -> Fas
     def disable(a: AccountArgs):
         return record("iam.disable", a.alert_id, {"account": a.account})
 
+    # Reverse actions: called only by an analyst revert or an automatic rollback.
+    @app.post("/tickets/reopen")
+    def reopen(a: AlertArgs):
+        return record("ticket.reopen", a.alert_id, {})
+
+    @app.post("/tickets/restore_severity")
+    def restore_severity(a: SeverityArgs):
+        return record("ticket.restore_severity", a.alert_id, {"severity": a.severity})
+
+    @app.post("/whitelist/remove")
+    def whitelist_remove(a: IndicatorArgs):
+        return record("whitelist.remove", a.alert_id, {"indicator": a.indicator})
+
+    @app.post("/rules/unsuppress")
+    def unsuppress(a: RuleArgs):
+        return record("rule.unsuppress", a.alert_id, {"rule": a.rule})
+
+    @app.post("/firewall/unblock")
+    def unblock(a: IpArgs):
+        return record("firewall.unblock", a.alert_id, {"ip": a.ip})
+
+    @app.post("/edr/release")
+    def release(a: HostArgs):
+        return record("edr.release", a.alert_id, {"host": a.host})
+
+    @app.post("/iam/enable")
+    def enable(a: AccountArgs):
+        return record("iam.enable", a.alert_id, {"account": a.account})
+
     @app.post("/outbox/send")
     def send(a: EmailArgs):
         # Local outbox only: nothing leaves the sandbox.

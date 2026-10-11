@@ -145,6 +145,48 @@
           "proton.me",
           "protonmail.com"
         ]
+      },
+      "undo": {
+        "close_alert": {
+          "tool": "reopen_alert",
+          "args": {}
+        },
+        "downgrade_severity": {
+          "tool": "restore_severity",
+          "args": {
+            "severity": "$alert_severity"
+          }
+        },
+        "whitelist_indicator": {
+          "tool": "remove_whitelist",
+          "args": {
+            "indicator": "indicator"
+          }
+        },
+        "suppress_rule": {
+          "tool": "unsuppress_rule",
+          "args": {
+            "rule": "rule"
+          }
+        },
+        "block_ip": {
+          "tool": "unblock_ip",
+          "args": {
+            "ip": "ip"
+          }
+        },
+        "isolate_host": {
+          "tool": "release_host",
+          "args": {
+            "host": "host"
+          }
+        },
+        "disable_account": {
+          "tool": "enable_account",
+          "args": {
+            "account": "account"
+          }
+        }
       }
     }
   }

@@ -100,6 +100,24 @@
           "proton.me",
           "protonmail.com"
         ]
+      },
+      "undo": {
+        "add_safe_sender": {
+          "tool": "remove_safe_sender",
+          "args": {
+            "sender": "sender"
+          }
+        },
+        "block_sender": {
+          "tool": "unblock_sender",
+          "args": {
+            "sender": "sender"
+          }
+        },
+        "mark_not_phishing": {
+          "tool": "mark_phishing",
+          "args": {}
+        }
       }
     }
   }

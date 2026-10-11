@@ -40,9 +40,10 @@ from trustgate.ingest.decode import SCAN_TEXT_LIMIT
 from trustgate.models import Alert, GateDecision, ProposedAction, Trust, TypedFacts, Verdict
 from trustgate.output_scan import OutputScanner, ScanResult
 from trustgate.policy_client import PolicyPack, load_pack, policy_client
+from trustgate.provenance import stamp_for
 from trustgate.ratelimit import rate_limiter
 from trustgate.recheck import RecheckResult, as_recheck, facts_only_recheck
-from trustgate.store import Escalation, Store
+from trustgate.store import ActionRecord, Escalation, Store
 from trustgate.tiers import Tier, UnknownTool
 
 log = structlog.get_logger("trustgate.gate")
@@ -122,6 +123,9 @@ class Gate:
         self.output_scanner = output_scanner or OutputScanner(self.pack, self.settings)
         self.timeout_s = timeout_s or self.settings.check_timeout_s
         self.tools: dict[str, RegisteredTool] = {}
+        # Reverse actions (unblock, release, reopen...). Never in self.tools: the agent
+        # cannot call them; only an analyst revert or an automatic rollback can.
+        self.undo_tools: dict[str, Callable[..., Any]] = {}
         # Checks run on a bounded pool. A check that times out keeps its slot until
         # it really finishes, so hung dependencies show up as saturation and new
         # decisions fail closed at once instead of queueing behind them.
@@ -185,7 +189,10 @@ class Gate:
                     decision = await asyncio.to_thread(self.decide, action, self._alert_ctx.get())
                     if not decision.permits_execution:
                         raise ActionEscalated(decision)
-                    return await fn(**self._execution_args(action, decision))
+                    args = self._execution_args(action, decision)
+                    result = await fn(**args)
+                    self._record_action(action, decision.tier, args, via="gate")
+                    return result
 
                 return async_wrapper
 
@@ -195,7 +202,10 @@ class Gate:
                 decision = self.decide(action, self._alert_ctx.get())
                 if not decision.permits_execution:
                     raise ActionEscalated(decision)
-                return fn(**self._execution_args(action, decision))
+                args = self._execution_args(action, decision)
+                result = fn(**args)
+                self._record_action(action, decision.tier, args, via="gate")
+                return result
 
             return wrapper
 
@@ -392,6 +402,12 @@ class Gate:
             policy_input["scope"] = {k: v for k, v in scope.items() if k != "reason"}
             if not scope["ok"]:
                 raise _Escalate([scope["reason"]])
+            history = self._history(alert.alert_id)
+            policy_input["history"] = history
+            max_t1 = int(self.pack.floor.get("sequence", {}).get("max_t1_per_alert", 1))
+            if history["t1_executed"] >= max_t1:
+                raise _Escalate([f"sequence: {', '.join(history['tools'][:3])} already ran on this alert; "
+                                 "another security-reducing action needs a human"], self._tainted(action, alert))
 
         if tier == Tier.DISRUPTIVE:
             target, fact = value_match.target_of(self.pack, action.tool, action.args,
@@ -493,6 +509,14 @@ class Gate:
             decision.redacted_args = {**action.args, **scan.redacted}
             decision.reasons.append("outbound payload redacted: " + ", ".join(
                 sorted({f.entity for f in scan.findings if f.action == "redact"})))
+        # Provenance survives the hand-off: a receiving agent's gate learns this alert was manipulated.
+        stamp = stamp_for(alert, self.pack.name, self.settings.provenance_key)
+        if stamp and fields:
+            body_arg = list(fields)[-1]  # body_args list the body last (subject, body)
+            args = dict(decision.redacted_args or action.args)
+            args[body_arg] = f"{args[body_arg]}\n\n{stamp}"
+            decision.redacted_args = args
+            decision.reasons.append("provenance stamp added")
 
     def _expiry_scope(self, action: ProposedAction) -> dict[str, Any]:
         spec = self.pack.expiry_spec(action.tool)
@@ -547,11 +571,85 @@ class Gate:
         tool = self.tools.get(action.tool)
         if tool is None or tool.fn is None:
             raise ToolConfigError(f"no executor registered for {action.tool}")
-        result = self._invoke(tool, action.alert_id, self._execution_args(action, decision))
+        args = self._execution_args(action, decision)
+        result = self._invoke(tool, action.alert_id, args)
         self.store.audit("execution", alert_id=action.alert_id, tool=action.tool,
                          details={"monitor": not decision.enforced, "would_block": decision.would_block,
                                   "audit_id": decision.audit_id})
+        self._record_action(action, decision.tier, args, via="gate")
         return result
+
+    # --- action ledger and rollback --------------------------------------------------
+
+    def register_undo(self, name: str, fn: Callable[..., Any]) -> None:
+        """Executor for a reverse action named in the pack's "undo" map (e.g. unblock_ip)."""
+        self.undo_tools[name] = fn
+
+    def _record_action(self, action: ProposedAction, tier: int | None, args: dict[str, Any], *,
+                       via: str) -> ActionRecord | None:
+        """Ledger every executed T1/T2 action with its reverse. T0 changes nothing; T3 cannot be unsent."""
+        if tier not in (int(Tier.SECURITY_REDUCING), int(Tier.DISRUPTIVE)):
+            return None
+        spec = self.pack.undo_spec(action.tool) or {}
+        undo_args: dict[str, Any] = {}
+        if spec:
+            alert = self.store.get_alert(action.alert_id) if action.alert_id else None
+            for undo_arg, source in spec.get("args", {}).items():
+                if source == "$alert_severity":
+                    undo_args[undo_arg] = alert.severity if alert else None
+                else:
+                    undo_args[undo_arg] = args.get(source)
+        undo_tool = spec.get("tool")
+        if undo_tool and "/" in action.tool:  # MCP alias: the reverse lives on the same server
+            undo_tool = f"{action.tool.split('/', 1)[0]}/{undo_tool}"
+        return self.store.record_action(ActionRecord(alert_id=action.alert_id, tool=action.tool, tier=int(tier),
+                                                     args=dict(args), via=via, undo_tool=undo_tool,
+                                                     undo_args=undo_args))
+
+    def revert(self, action_id: str, *, by: str, reason: str) -> ActionRecord:
+        """Run an executed action's reverse. Raises KeyError, or ToolConfigError if it cannot be undone."""
+        rec = self.store.get_action(action_id)
+        if rec is None or rec.status != "executed":
+            raise KeyError(action_id)
+        name = rec.undo_tool or ""
+        fn = self.undo_tools.get(name) or self.undo_tools.get(name.split("/", 1)[-1])
+        if fn is None:
+            raise ToolConfigError(f"no reverse action registered for {rec.tool}")
+        try:
+            self._invoke(RegisteredTool(name=name, tier=Tier.ALWAYS_ALLOWED, fn=fn), rec.alert_id, rec.undo_args)
+            rec.status = "reverted"
+        except Exception as exc:
+            rec.status = "revert_failed"
+            reason = f"{reason} (revert failed: {type(exc).__name__})"
+        rec.reverted_at = dt.datetime.now(dt.timezone.utc)
+        rec.reverted_by, rec.revert_reason = by, reason
+        self.store.update_action(rec)
+        self.store.audit("revert", alert_id=rec.alert_id, tool=rec.tool,
+                         details={"action_id": rec.id, "undo_tool": rec.undo_tool, "status": rec.status,
+                                  "by": by, "reason": reason})
+        return rec
+
+    def revert_alert(self, alert_id: str, *, reason: str, tiers: tuple[int, ...] = (int(Tier.SECURITY_REDUCING),),
+                     by: str = "trustgate:auto") -> list[ActionRecord]:
+        """Automatic rollback: a later signal contradicts what the action assumed (e.g. the alert
+        turned out to be manipulated), so undo its security-reducing actions."""
+        out: list[ActionRecord] = []
+        for rec in self.store.actions(alert_id, status="executed"):
+            if rec.tier in tiers and rec.undo_tool:
+                try:
+                    out.append(self.revert(rec.id, by=by, reason=reason))
+                except (KeyError, ToolConfigError) as exc:
+                    self.store.audit("revert", alert_id=alert_id, tool=rec.tool,
+                                     details={"action_id": rec.id, "status": "not_reverted", "by": by,
+                                              "reason": f"{reason} ({type(exc).__name__})"})
+        return out
+
+    def _history(self, alert_id: str) -> dict[str, Any]:
+        window = int(self.pack.floor.get("sequence", {}).get("window_s", 86400))
+        since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=window)
+        recs = self.store.actions(alert_id, status="executed", since=since) if alert_id else []
+        return {"t1_executed": sum(1 for r in recs if r.tier == 1), "t2_executed": sum(1 for r in recs if r.tier == 2),
+                "tools": [r.tool for r in recs]}
 
     @staticmethod
     def _invoke(tool: RegisteredTool, alert_id: str, args: dict[str, Any]) -> Any:
@@ -604,6 +702,7 @@ class Gate:
                                           "second_analyst": second_analyst})
                 raise ApprovalExecutionFailed(f"approved action failed to execute ({error}); "
                                               "escalation closed as failed") from None
+            self._record_action(action, esc.tier, args, via="approval")
         self.store.close_escalation(escalation_id, status="approved" if approve else "rejected", analyst=analyst,
                                     reason=reason, result={"result": result} if approve else None)
         self.store.audit("analyst", alert_id=esc.alert_id, tool=esc.tool,

@@ -62,6 +62,28 @@ class MockSOCClient:
     def post_webhook(self, alert_id: str, url: str, payload: str) -> dict:
         return self._post("/webhook/post", {"alert_id": alert_id, "url": url, "payload": payload})
 
+    # Reverse actions (analyst revert / automatic rollback only)
+    def reopen_alert(self, alert_id: str) -> dict:
+        return self._post("/tickets/reopen", {"alert_id": alert_id})
+
+    def restore_severity(self, alert_id: str, severity: str) -> dict:
+        return self._post("/tickets/restore_severity", {"alert_id": alert_id, "severity": severity})
+
+    def remove_whitelist(self, alert_id: str, indicator: str) -> dict:
+        return self._post("/whitelist/remove", {"alert_id": alert_id, "indicator": indicator})
+
+    def unsuppress_rule(self, alert_id: str, rule: str) -> dict:
+        return self._post("/rules/unsuppress", {"alert_id": alert_id, "rule": rule})
+
+    def unblock_ip(self, alert_id: str, ip: str) -> dict:
+        return self._post("/firewall/unblock", {"alert_id": alert_id, "ip": ip})
+
+    def release_host(self, alert_id: str, host: str) -> dict:
+        return self._post("/edr/release", {"alert_id": alert_id, "host": host})
+
+    def enable_account(self, alert_id: str, account: str) -> dict:
+        return self._post("/iam/enable", {"alert_id": alert_id, "account": account})
+
     def query_logs(self, alert_id: str) -> list[str]:
         resp = self._http.get("/logs", params={"alert_id": alert_id})
         resp.raise_for_status()

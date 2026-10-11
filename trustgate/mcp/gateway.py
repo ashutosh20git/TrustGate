@@ -128,6 +128,8 @@ class Gateway:
         await asyncio.to_thread(self.gate.store.audit, "execution", alert_id=action.alert_id, tool=action.tool,
                                 details={"via": "mcp_gateway", "monitor": not decision.enforced,
                                          "would_block": decision.would_block, "audit_id": decision.audit_id})
+        if not bool(getattr(result, "is_error", False)):
+            await asyncio.to_thread(self.gate._record_action, action, decision.tier, call_args, via="mcp_gateway")
         return await asyncio.to_thread(self._screen_result, name, action.alert_id, result)
 
     def _screen_result(self, name: str, alert_id: str, result: Any) -> types.CallToolResult:
@@ -174,6 +176,8 @@ class Gateway:
         alert.flag_ai_evasion(IOCSignal(source="mcp_output", rule=rules[0] if rules else "tool_result",
                                         score=min(1.0, max(0.0, score)), excerpt=f"result of {source}"))
         self.gate.store.put_alert(alert)
+        # Anything security-reducing already done on this alert assumed it was clean: undo it.
+        self.gate.revert_alert(alert.alert_id, reason=f"injection found later in the result of {source}")
 
 
 async def serve(upstream_cmd: list[str], server_name: str, gate: Gate, registry: ToolPinRegistry) -> None:

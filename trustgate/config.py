@@ -67,6 +67,9 @@ class Settings:
     # Escalations
     escalation_ttl_s: float = field(default_factory=lambda: _env_float("TRUSTGATE_ESCALATION_TTL_S", 4 * 3600.0))
     # "name:sha256(token)" lines; Docker secret analyst_tokens. Unset = approvals refused.
+    # Shared HMAC key for cross-agent provenance stamps (optional; unsigned stamps still raise suspicion).
+    provenance_key: str | None = field(
+        default_factory=lambda: _env("TRUSTGATE_PROVENANCE_KEY") or _read_secret("provenance_key"))
     analyst_tokens: str | None = field(
         default_factory=lambda: _env("TRUSTGATE_ANALYST_TOKENS") or _read_secret("analyst_tokens"))
     max_field_chars: int = field(default_factory=lambda: _env_int("TRUSTGATE_MAX_FIELD_CHARS", 4000))

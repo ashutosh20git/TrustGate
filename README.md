@@ -17,7 +17,7 @@ python -m spacy download en_core_web_lg
 # OPA binary (needed for the gate): downloaded to .tools/ during the build, or:
 #   curl -L -o .tools/opa.exe https://github.com/open-policy-agent/opa/releases/latest/download/opa_windows_amd64.exe
 
-pytest                                   # 114 tests, each mapped to a silent-failure fix
+pytest                                   # 135 tests, each mapped to a silent-failure fix or feature
 python -m eval.run --configs A,B,C,D     # attack suite A-D + the gate-only-catches headline
 python scripts/seed_demo.py --local      # show the poisoned email being split and flagged
 ```
@@ -133,7 +133,7 @@ Tests: `tests/test_silent_failures_v23.py`.
 | Hindi and Hinglish payloads | Languages untested | 20+ payloads in the attack suite; a multilingual classifier if time allows | 2 | A | Should |
 | SIEM export | No SIEM feed | JSON-lines audit stream to Wazuh or Splunk HTTP Event Collector | 1 | B | Could |
 | Lakera as a baseline | Comparison credibility | Add as a configuration if API access is available | 2 | A | Could |
-| Image OCR | Images unscreened | Tesseract via pytesseract → evidence items | 3 | A | Stretch |
+| Image OCR | Images unscreened | Tesseract via pytesseract → evidence items, plus QR decoding (OpenCV) | 3 | A | **Built** (Part 2) |
 
 Owners: **A** = agent and evaluation, **B** = gate and UI.
 
@@ -199,6 +199,22 @@ flowchart TB
 
 ---
 
+## Part 2: gaps the big vendors leave open
+
+Built on top of the gate. Tests: `tests/test_part2_features.py`, `packs/policy_test.rego`.
+
+| Gap | What TrustGate does | Where |
+|---|---|---|
+| **No undo for agent actions** | Every executed T1/T2 action is ledgered with its reverse (reopen, unblock, release, re-enable, remove from allowlist). An analyst reverts it in one click; when a later signal shows the alert was manipulated (an injection in a tool result), its security-reducing actions are rolled back automatically. Reverse actions are never agent tools | `Gate.revert`, `Gate.revert_alert`, `GET /v1/actions`, `POST /v1/actions/{id}/revert` |
+| **Single-step judgement** | Sequence policy: one security-reducing action per alert runs automatically; a chain (whitelist, then close, then suppress) needs a human. Enforced in code and in the Rego floor over the action ledger | `packs/floor.json` `sequence`, `packs/floor.rego` |
+| **Rubber-stamped escalations** | Analyst trust scores: approval rate, canaries approved, median decision time; flags with reasons for review | `Store.analyst_scores`, `GET /v1/analysts`, dashboard Analysts tab |
+| **No "why not"** | Counterfactual explanations: the smallest change in typed facts that would let the action run ("would allow if facts.dmarc_pass were True"), and what never runs automatically. Canaries are explained like any item | `trustgate/counterfactual.py`, `GET /v1/escalations/{id}/explain` |
+| **Provenance lost between agents** | Outbound text from a manipulated alert carries a signed provenance stamp; a receiving TrustGate turns it into an IOC (and an AI-evasion tag). Stamps can only raise suspicion; with `TRUSTGATE_PROVENANCE_KEY` shared, signatures are checked | `trustgate/provenance.py`, `Splitter._upstream_provenance` |
+| **Policies not tested against attacks** | Rego unit tests for every floor and pack rule (`opa test packs/`), and the CI eval guard now fails if attack success rises for any attack class or language, not only overall | `packs/policy_test.rego`, `scripts/ci_eval_guard.py` |
+| **Indian languages unmeasured** | Tamil, Bengali, Telugu and Marathi payloads beside Hindi and Hinglish, with per-language results (offline simulator: config B passes all 20 new ones, config C stops all 20). Translations are the team's own, not reviewed by native speakers | `eval/payloads.py`, `per_language` in `eval/results/summary.json` |
+| **Compliance evidence** | Evidence packs from the hash-chained audit trail for CERT-In (6-hour reporting, 180-day logs), the DPDP Act 2023 (s.8(5), s.8(6)) and ISO/IEC 27001:2022 (A.5.24-5.28, A.8.15-8.16). Evidence for a review, not a compliance determination | `trustgate/compliance.py`, `GET /v1/compliance/{framework}`, `scripts/compliance_report.py` |
+| **Quishing and text in images** | QR codes in attached images and in PDF pages are decoded (OpenCV) into untrusted evidence, their links go to URL reputation, and `facts.attachment_has_qr` is set; image text is read with Tesseract OCR and scanned like any evidence | `trustgate/ingest/attachments.py` |
+
 ## Packaging
 
 One engine ships in three forms. The hackathon builds the first two and pitches the third.
@@ -261,7 +277,7 @@ Measured on the build laptop: 11.7 GB RAM, 12 logical CPUs, NVIDIA GeForce RTX 2
 | [ ] Close heavy apps while the stack runs | RAM headroom | Prompt Guard 2, LLM Guard, the Presidio spaCy model, Postgres, Redis and Streamlit together are tight on 11.7 GB |
 | [x] Node.js 22 | promptfoo regression suite | Already installed |
 | [x] Git | Version control | Already installed |
-| [ ] Tesseract OCR | Only if the Image OCR stretch item is kept | |
+| [ ] Tesseract OCR | Text in image attachments (built; flagged `ocr_unavailable` without it) | `apt install tesseract-ocr` / Windows installer; CI installs it |
 
 ### 3. Datasets
 
@@ -358,7 +374,7 @@ TrustGate/
 ├── examples/email_assistant.py    # second agent protected in a few lines
 ├── eval/                          # payloads, inject, build_attachments, generate_alerts, configs, sim, metrics, run
 ├── scripts/                       # init_secrets, seed_demo, train_recheck, check_model_pins, ci_eval_guard
-├── tests/                         # 114 tests, each mapped to a silent-failure fix
+├── tests/                         # 135 tests, each mapped to a silent-failure fix or feature
 ├── .tools/opa.exe                 # OPA binary (git-ignored)
 ├── DISCLOSURE.md · PLACEHOLDERS.md · README.md
 ```

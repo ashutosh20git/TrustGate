@@ -16,7 +16,9 @@ or runs **degraded** — never silently open — and has a tracking issue in `bd
 | 7 | llm-guard on Python 3.13 | LLM Guard scanners unavailable on the dev machine (fine in containers) | Use Python 3.11 locally, or rely on Presidio + regex (both work on 3.13) | `tg-hwm` |
 | 8 | Policy-pack values | Example critical assets / allowlists / entity lists | Replace in `packs/soc.json`, `packs/generic.json` with the real environment's | `tg-981` |
 | 9 | Hackathon rules decision | — | Confirm pre-build is allowed with Mitigata | `tg-e5d` |
-| 10 | Optional (Lakera, SIEM, OCR) | Off by default; first in the cut order | Lakera key / Splunk HEC / Tesseract as needed | `tg-0gx` |
+| 10 | Optional (Lakera, SIEM) | Off by default; first in the cut order | Lakera key / Splunk HEC as needed | `tg-0gx` |
+| 13 | Tesseract OCR binary | Image text is not read; attachments are flagged `ocr_unavailable` (QR decoding still works) | Install `tesseract-ocr` on the ingest host | — |
+| 14 | Provenance key (optional) | Provenance stamps are unsigned: they still raise suspicion, but receivers cannot check them | Set the same `TRUSTGATE_PROVENANCE_KEY` (or Docker secret `provenance_key`) on every gate that hands off to another | — |
 | 11 | Sender history from the MTA / SIEM | **Every email T1 action escalates** (attacker-cost floor: no fact a fresh campaign cannot buy) | Post `observed.sender_prior_messages` (messages this exact sender delivered before) with each email alert, from mail-gateway logs or a SIEM lookup | — (needs a `bd` issue) |
 | 12 | Analyst tokens | **Every approval, rejection and MCP re-pin is refused** (503), and the analyst views (queue, audit, metrics, pins) are closed: no identity, no access | `python scripts/init_secrets.py --analyst <name>` per analyst; hand each printed token to that analyst only, never to the agent | — (needs a `bd` issue) |
 

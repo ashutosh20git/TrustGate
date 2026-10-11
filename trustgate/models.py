@@ -57,6 +57,7 @@ class TypedFacts(BaseModel):
     attachment_parse_failed: bool = False
     attachment_hidden_content: bool = False
     attachment_has_macros: bool = False
+    attachment_has_qr: bool = False  # a QR code in an image: links no text filter sees (quishing)
     # How many messages this exact sender delivered to the organisation before
     # this one (MTA/SIEM history). Unlike SPF/DKIM/DMARC, domain age or a clean
     # URL, an attacker cannot buy this cheaply for a fresh campaign.
@@ -121,6 +122,7 @@ class TypedFacts(BaseModel):
             "attachment_parse_failed": self.attachment_parse_failed,
             "attachment_hidden_content": self.attachment_hidden_content,
             "attachment_has_macros": self.attachment_has_macros,
+            "attachment_has_qr": self.attachment_has_qr,
             "sender_prior_messages": self.sender_prior_messages,
             "enrichment_failed": self.enrichment_failed,
         }

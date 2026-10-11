@@ -27,6 +27,9 @@ open-source component. This list is kept current as the build adds each one.
 | LangGraph, langchain-core | SOC agent graph and tool adapter |
 | LiteLLM | Model-agnostic LLM calls (agent, attacker) |
 | Streamlit, Plotly, pandas, numpy | Dashboard and metrics |
+| OpenCV (opencv-python-headless), Pillow | QR-code decoding and image handling in attachments (Part 2) |
+| pytesseract + Tesseract OCR (binary) | Text in image attachments (Part 2) |
+| segno | QR codes generated for tests |
 | pytest | Tests |
 
 ## External services / APIs

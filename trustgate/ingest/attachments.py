@@ -6,6 +6,12 @@ text, hidden runs, sheets, rows, columns and slides, off-page shapes) is kept
 as a separate part and flagged "hidden_text". Metadata, comments and speaker
 notes become their own parts. Any parser error turns the attachment into an
 untrusted evidence item flagged "unparseable" (fail closed).
+
+Images (attached, or embedded in PDF pages) are read too: QR codes are decoded
+with OpenCV (quishing: a phishing link no text filter sees) and text is read
+with Tesseract OCR. Both become untrusted evidence; QR links go to URL
+reputation. A missing OCR or QR backend is flagged ("ocr_unavailable",
+"qr_unavailable"), never silent.
 """
 
 from __future__ import annotations
@@ -22,12 +28,16 @@ MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
 MAX_COMPRESSION_RATIO = 200
 MAX_PAGES = 200
 MAX_CELLS = 50_000
+MAX_IMAGE_PIXELS = 40_000_000   # decompression-bomb guard
+MAX_PDF_IMAGES = 20
+_URL = re.compile(r"(?i)\bhttps?://[^\s<>\"']+")
 
 EXTENSION_KIND = {
     ".pdf": "pdf",
     ".docx": "docx", ".docm": "docx",
     ".xlsx": "xlsx", ".xlsm": "xlsx",
     ".pptx": "pptx", ".pptm": "pptx",
+    ".png": "image", ".jpg": "image", ".jpeg": "image", ".gif": "image", ".bmp": "image", ".webp": "image",
 }
 _WT = re.compile(r"<w:t(?:\s[^>]*)?>(.*?)</w:t>", re.S)
 _ACTIVE_FORMULA = re.compile(r"\b(WEBSERVICE|HYPERLINK|IMPORTDATA|IMPORTXML|CALL|EXEC|REGISTER)\s*\(", re.I)
@@ -51,6 +61,8 @@ class AttachmentResult:
     parse_failed: bool = False
     hidden_content: bool = False
     has_macros: bool = False
+    has_qr: bool = False
+    urls: list[str] = field(default_factory=list)  # from QR codes: sent to URL reputation
 
 
 class UnparseableAttachment(ValueError):
@@ -73,6 +85,9 @@ def detect_kind(data: bytes) -> str:
         return "zip"
     if data[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
         return "ole"  # legacy .doc/.xls/.ppt: not parsed, fails closed
+    if (data[:8] == b"\x89PNG\r\n\x1a\n" or data[:3] == b"\xff\xd8\xff" or data[:4] == b"GIF8"
+            or data[:2] == b"BM" or (data[:4] == b"RIFF" and data[8:12] == b"WEBP")):
+        return "image"
     return "unknown"
 
 
@@ -145,6 +160,7 @@ def _parse_pdf(data: bytes, result: AttachmentResult) -> None:
         if doc.needs_pass:
             raise UnparseableAttachment("encrypted pdf")
         meta = doc.metadata or {}
+        images_seen = 0
         _metadata_part(result, [(k, meta.get(k)) for k in ("title", "author", "subject", "keywords", "creator")])
         for xref in range(1, doc.xref_length()):
             obj = doc.xref_object(xref, compressed=False) or ""
@@ -179,8 +195,69 @@ def _parse_pdf(data: bytes, result: AttachmentResult) -> None:
             _add_part(result, f"page[{pno}].hidden", [" ".join(hidden)], ["hidden_text"])
             notes = [str((annot.info or {}).get("content", "")) for annot in (page.annots() or [])]
             _add_part(result, f"page[{pno}].annotations", notes, ["annotation"])
+            for n, img in enumerate(page.get_images(full=True)):
+                if images_seen >= MAX_PDF_IMAGES:
+                    if "images_truncated" not in result.flags:
+                        result.flags.append("images_truncated")
+                    break
+                images_seen += 1
+                try:
+                    raw = doc.extract_image(img[0]).get("image", b"")
+                except Exception:  # noqa: BLE001 - one bad image does not void the page
+                    continue
+                if raw:
+                    try:
+                        _scan_image(raw, result, f"page[{pno}].image[{n}]")
+                    except UnparseableAttachment:
+                        _flag(result, "image_unreadable")  # e.g. JPEG 2000 / JBIG2 scans
     finally:
         doc.close()
+
+
+# --- Images: QR codes (OpenCV) and OCR (Tesseract) ---------------------------------
+
+def _flag(result: AttachmentResult, flag: str) -> None:
+    if flag not in result.flags:
+        result.flags.append(flag)
+
+
+def _scan_image(data: bytes, result: AttachmentResult, label: str) -> None:
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        _flag(result, "qr_unavailable")
+        _flag(result, "ocr_unavailable")
+        return
+    img = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise UnparseableAttachment("image does not decode")
+    if img.shape[0] * img.shape[1] > MAX_IMAGE_PIXELS:
+        raise UnparseableAttachment("image too large")
+    try:
+        ok, texts, _points, _ = cv2.QRCodeDetector().detectAndDecodeMulti(img)
+    except cv2.error:
+        ok, texts = False, ()
+    payloads = [t for t in (texts if ok else ()) if t]
+    if payloads:
+        result.has_qr = True
+        _flag(result, "qr_code")
+        for n, text in enumerate(payloads):
+            _add_part(result, f"{label}.qr[{n}]", [text], ["qr_code"])
+            result.urls.extend(_URL.findall(text))
+    try:
+        import pytesseract
+
+        pytesseract.get_tesseract_version()
+    except Exception:  # noqa: BLE001 - not installed: flagged, not silent
+        _flag(result, "ocr_unavailable")
+        return
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _add_part(result, f"{label}.ocr", [pytesseract.image_to_string(gray, timeout=20)], ["ocr"])
+
+
+def _parse_image(data: bytes, result: AttachmentResult) -> None:
+    _scan_image(data, result, "image")
 
 
 # --- DOCX (python-docx) -----------------------------------------------------
@@ -345,4 +422,4 @@ def _parse_pptx(data: bytes, result: AttachmentResult) -> None:
                             ("comments", props.comments), ("keywords", props.keywords)])
 
 
-_PARSERS = {"pdf": _parse_pdf, "docx": _parse_docx, "xlsx": _parse_xlsx, "pptx": _parse_pptx}
+_PARSERS = {"pdf": _parse_pdf, "docx": _parse_docx, "xlsx": _parse_xlsx, "pptx": _parse_pptx, "image": _parse_image}
