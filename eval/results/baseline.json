@@ -1,4 +1,26 @@
 {
   "c_asr@1": 0.0,
-  "gate_only_rate": 1.0
+  "gate_only_rate": 1.0,
+  "per_class": {
+    "adi_fake_metadata": 0.0,
+    "attachment_borne": 0.0,
+    "context_manipulation": 0.0,
+    "context_stitching": 0.0,
+    "detector_evasion": 0.0,
+    "direct_override": 0.0,
+    "exfiltration": 0.0,
+    "mcp_tool_poisoning": 0.0,
+    "obfuscation": 0.0,
+    "persona_hijack": 0.0,
+    "volume_padding": 0.0
+  },
+  "per_language": {
+    "bn": 0.0,
+    "en": 0.0,
+    "hi": 0.0,
+    "hinglish": 0.0,
+    "mr": 0.0,
+    "ta": 0.0,
+    "te": 0.0
+  }
 }

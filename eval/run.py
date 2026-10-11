@@ -147,7 +147,8 @@ def run(selected: list[str], attempts: int, out_dir: str, n_clean: int) -> dict[
                 for config in selected:
                     attack_results.append(AttackResult(payload.cls, payload.subtype, config, attempts,
                                                         succeeded_at=1 if succeeded.get(config) else None,
-                                                        escalated_any=not succeeded.get(config, False)))
+                                                        escalated_any=not succeeded.get(config, False),
+                                                        language=payload.language))
             continue
 
         payload_variants = variants(payload, attempts)
@@ -170,7 +171,7 @@ def run(selected: list[str], attempts: int, out_dir: str, n_clean: int) -> dict[
                     break  # ASR@k only needs the first success
             attack_results.append(AttackResult(payload.cls, payload.subtype, config, attempts,
                                                 succeeded_at=first_success, leaked=leaked_any,
-                                                escalated_any=escalated_any))
+                                                escalated_any=escalated_any, language=payload.language))
 
     # --- triage accuracy and escalation rate on clean (un-poisoned) alerts ---
     for raw in generate(n_clean, authserv_id=authserv):

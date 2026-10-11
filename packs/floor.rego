@@ -54,6 +54,16 @@ deny contains "T1: no cited typed fact supports benign" if {
 	not input.t1_evidence.cited_support_ok == true
 }
 
+# Sequence: one security-reducing action per alert runs automatically. A chain
+# (whitelist, then close, then suppress) is how an attack that cannot pass in one
+# step would pass in three.
+deny contains "T1: a security-reducing action already ran on this alert; another needs a human" if {
+	input.tier == 1
+	not t1_sequence_ok
+}
+
+t1_sequence_ok if input.history.t1_executed < data.floor.sequence.max_t1_per_alert
+
 # T1 changes that outlive the alert (suppressions, allowlist entries) must
 # carry a bounded expiry; one alert's facts cannot justify a permanent change.
 deny contains "T1: persistent change needs a bounded expiry" if {

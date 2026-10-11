@@ -99,7 +99,17 @@ def soc_tool_functions(client: MockSOCClient, store: Store, ti: ThreatIntel | No
     )}
 
 
-def register_soc_tools(gate: Gate, functions: dict[str, Callable[..., Any]], *, mcp_server: str = "mock-soc") -> None:
+def soc_undo_functions(client: MockSOCClient) -> dict[str, Callable[..., Any]]:
+    """Reverse actions for the pack's "undo" map. Registered as undo executors, never as agent tools."""
+    return {name: getattr(client, name) for name in (
+        "reopen_alert", "restore_severity", "remove_whitelist", "unsuppress_rule",
+        "unblock_ip", "release_host", "enable_account")}
+
+
+def register_soc_tools(gate: Gate, functions: dict[str, Callable[..., Any]], *, mcp_server: str = "mock-soc",
+                       undo: dict[str, Callable[..., Any]] | None = None) -> None:
+    for name, fn in (undo or {}).items():
+        gate.register_undo(name, fn)
     for name, fn in functions.items():
         tier = gate.pack.tier_of(name)
         if tier is None:

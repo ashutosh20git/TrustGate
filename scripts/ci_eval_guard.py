@@ -2,7 +2,9 @@
 
 Runs the offline attack suite and asserts the gate (config C) still catches
 everything the detector (config B) misses, and that config C's ASR@1 does not
-exceed a stored baseline. Writes/updates eval/results/baseline.json.
+exceed a stored baseline overall, per attack class or per language: a policy
+change that loosens one class must not hide behind a good average. Writes/updates
+eval/results/baseline.json.
 """
 
 from __future__ import annotations
@@ -30,13 +32,28 @@ def main() -> int:
         print("REGRESSION: the gate did not stop every attack that passed the detector.")
         return 1
 
+    c = summary["configs"]["C"]
+    current = {
+        "c_asr@1": c_asr,
+        "gate_only_rate": headline["rate"],
+        "per_class": {k: v["asr@1"] for k, v in c["per_class"].items()},
+        "per_language": {k: v["asr@1"] for k, v in c.get("per_language", {}).items()},
+    }
     if BASELINE.exists():
         baseline = json.loads(BASELINE.read_text(encoding="utf-8"))
+        rises = []
         if c_asr > baseline["c_asr@1"] + TOLERANCE:
-            print(f"REGRESSION: config C ASR@1 rose {baseline['c_asr@1']} -> {c_asr}")
+            rises.append(f"overall {baseline['c_asr@1']} -> {c_asr}")
+        for group in ("per_class", "per_language"):
+            for key, value in current[group].items():
+                before = baseline.get(group, {}).get(key)
+                if before is not None and value > before + TOLERANCE:
+                    rises.append(f"{group[4:]} {key}: {before} -> {value}")
+        if rises:
+            print("REGRESSION: config C ASR@1 rose: " + "; ".join(rises))
             return 1
     BASELINE.parent.mkdir(parents=True, exist_ok=True)
-    BASELINE.write_text(json.dumps({"c_asr@1": c_asr, "gate_only_rate": headline["rate"]}, indent=2), encoding="utf-8")
+    BASELINE.write_text(json.dumps(current, indent=2, sort_keys=True), encoding="utf-8")
     print("regression guard passed.")
     return 0
 

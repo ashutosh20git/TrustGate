@@ -106,6 +106,24 @@ class ToolPin(SQLModel, table=True):
     last_seen_schema: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
 
 
+class ActionRecord(SQLModel, table=True):
+    """An executed T1/T2 action and how to undo it (automatic rollback, sequence policy)."""
+
+    id: str = Field(default_factory=_id, primary_key=True)
+    ts: dt.datetime = Field(default_factory=_now, index=True)
+    alert_id: str = Field(index=True)
+    tool: str
+    tier: int
+    args: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    via: str = "gate"  # gate, approval, mcp_gateway
+    undo_tool: str | None = None
+    undo_args: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    status: str = Field(default="executed", index=True)  # executed, reverted, revert_failed
+    reverted_at: dt.datetime | None = None
+    reverted_by: str | None = None
+    revert_reason: str | None = None
+
+
 class ToolResponseShape(SQLModel, table=True):
     """Baseline shape of an MCP tool's successful responses (content types, structured keys)."""
 
@@ -201,6 +219,85 @@ class Store:
                                json={"event": event, "sourcetype": "trustgate:audit"})
             except httpx.HTTPError:
                 log.warning("trustgate.siem_export_failed", audit_id=rec.id)
+
+    # --- action ledger ----------------------------------------------------------
+
+    def record_action(self, rec: ActionRecord) -> ActionRecord:
+        with self.session() as s:
+            s.add(rec)
+            s.commit()
+            return rec
+
+    def get_action(self, action_id: str) -> ActionRecord | None:
+        with self.session() as s:
+            return s.get(ActionRecord, action_id)
+
+    def actions(self, alert_id: str | None = None, *, status: str | None = None,
+                since: dt.datetime | None = None, limit: int = 500) -> list[ActionRecord]:
+        with self.session() as s:
+            q = select(ActionRecord).order_by(ActionRecord.ts.desc())
+            if alert_id:
+                q = q.where(ActionRecord.alert_id == alert_id)
+            if status:
+                q = q.where(ActionRecord.status == status)
+            if since is not None:
+                q = q.where(ActionRecord.ts >= since)
+            return list(s.exec(q.limit(limit)).all())
+
+    def update_action(self, rec: ActionRecord) -> None:
+        with self.session() as s:
+            s.merge(rec)
+            s.commit()
+
+    def analyst_scores(self, *, min_decisions: int = 10, fast_s: float = 15.0,
+                       high_approval: float = 0.95) -> dict[str, Any]:
+        """Is the human queue still a check? Per analyst: decisions, approval rate, canaries
+        approved (a planted known-bad item waved through), and decision speed.
+
+        Flags, each with its reason: any canary approved; or, with at least
+        min_decisions, approving almost everything or deciding faster than fast_s
+        seconds at the median (rubber-stamping). A flag asks for a review of the
+        analyst's queue, not a verdict on the person.
+        """
+        rows: dict[str, dict[str, Any]] = {}
+        for esc in self.escalations(None, limit=1_000_000):
+            if esc.status == "open" or not esc.analyst or esc.status == "expired":
+                continue
+            row = rows.setdefault(esc.analyst, {"analyst": esc.analyst, "decisions": 0, "approved": 0,
+                                                "rejected": 0, "canary_caught": 0, "canary_missed": 0,
+                                                "_latencies": []})
+            row["decisions"] += 1
+            if esc.status in ("approved", "failed"):
+                row["approved"] += 1
+            elif esc.status == "rejected":
+                row["rejected"] += 1
+            if esc.canary:
+                outcome = (esc.result or {}).get("canary")
+                if outcome in ("canary_caught", "canary_missed"):
+                    row[outcome] += 1
+            if esc.decided_at is not None:
+                created = esc.created_at if esc.created_at.tzinfo else esc.created_at.replace(tzinfo=dt.timezone.utc)
+                decided = esc.decided_at if esc.decided_at.tzinfo else esc.decided_at.replace(tzinfo=dt.timezone.utc)
+                row["_latencies"].append(max(0.0, (decided - created).total_seconds()))
+        out = []
+        for row in sorted(rows.values(), key=lambda r: r["analyst"]):
+            latencies = sorted(row.pop("_latencies"))
+            row["approval_rate"] = round(row["approved"] / row["decisions"], 4) if row["decisions"] else 0.0
+            row["median_decision_s"] = latencies[len(latencies) // 2] if latencies else None
+            flags = []
+            if row["canary_missed"]:
+                flags.append(f"approved {row['canary_missed']} planted known-bad canary item(s)")
+            if row["decisions"] >= min_decisions and row["approval_rate"] >= high_approval:
+                flags.append(f"approves {row['approval_rate']:.0%} of escalations")
+            if (row["decisions"] >= min_decisions and row["median_decision_s"] is not None
+                    and row["median_decision_s"] < fast_s):
+                flags.append(f"median decision in {row['median_decision_s']:.0f} s")
+            row["flags"] = flags
+            row["review"] = bool(flags)
+            out.append(row)
+        return {"criteria": f"review if any canary approved; or, with {min_decisions}+ decisions, approval rate "
+                            f">= {high_approval:.0%} or median decision under {fast_s:g} s",
+                "analysts": out}
 
     def rollout_report(self, *, min_samples: int = 50) -> dict[str, Any]:
         """Monitor-mode readiness per tool: what enforcing would have blocked, and why.

@@ -130,6 +130,7 @@ def test_floor_denies_t1_without_cited_support(opa_engine):
         "pack": "soc", "tool": "close_alert", "tier": 1, "agent_verdict": "benign", "recheck_verdict": "benign",
         "cited": ["facts.ioc_ips"], "alert_severity": "low", "ai_evasion_attempt": False,
         "contains_raw_evidence": False, "output_entities": [], "scope": {"required": False, "ok": True},
+        "history": {"t1_executed": 0, "t2_executed": 0, "tools": []},
         "t1_evidence": {"unknown_core": [], "costly_support": ["x"], "costly_ok": True,
                         "enrichment_failed": False, "cited_support": [], "cited_support_ok": False}})
     assert result.allow is False

@@ -85,6 +85,11 @@
           "value": 30
         }
       ]
+    },
+    "sequence": {
+      "description": "Actions already executed on the same alert (not reverted) inside window_s. One security-reducing action per alert runs automatically; a chain such as whitelist then close then suppress needs a human.",
+      "window_s": 86400,
+      "max_t1_per_alert": 1
     }
   }
 }

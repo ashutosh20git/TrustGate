@@ -6,14 +6,14 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
 
-# Build deps for packages with native wheels (checkdmarc, psycopg, pymupdf).
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential libpq-dev \
+# Build deps for packages with native wheels (checkdmarc, psycopg, pymupdf); Tesseract for image OCR.
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential libpq-dev tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md ./
 COPY trustgate ./trustgate
 # Install the library plus every runtime extra the services need.
-RUN pip install ".[ingest,attachments,output-scan,detector,recheck-xgb,mcp,server,agent,dashboard,eval]" \
+RUN pip install ".[ingest,attachments,images,output-scan,detector,recheck-xgb,mcp,server,agent,dashboard,eval]" \
     && python -m spacy download en_core_web_lg
 
 COPY . .

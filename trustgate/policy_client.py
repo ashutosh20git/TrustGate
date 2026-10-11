@@ -64,6 +64,10 @@ class PolicyPack:
         """T1 tools whose effect outlives the alert: {"ttl_arg": ..., "max_hours": ...}."""
         return self._spec("expiring_tools", tool)
 
+    def undo_spec(self, tool: str) -> dict[str, Any] | None:
+        """How to reverse an executed action: {"tool": ..., "args": {undo_arg: source_arg | "$alert_severity"}}."""
+        return self._spec("undo", tool)
+
     def campaign_limit(self, tier: Tier) -> tuple[int, int] | None:
         """(limit, window_s) for actions per sender domain, or None."""
         spec = self.data.get("campaign_rate_limits", {})

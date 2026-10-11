@@ -25,11 +25,13 @@ from trustgate.models import (
     SEVERITY_ORDER,
     Alert,
     Evidence,
+    IOCSignal,
     LabelCoverage,
     Severity,
     Trust,
     TypedFacts,
 )
+from trustgate.provenance import read_stamps
 
 AI_EVASION_TAG = "AI-evasion attempt"
 HIDDEN_CONTENT_TAG = "hidden content"
@@ -195,6 +197,8 @@ class Splitter:
             facts["attachment_parse_failed"] = any(a.parse_failed for a in attachments)
             facts["attachment_hidden_content"] = any(a.hidden_content for a in attachments)
             facts["attachment_has_macros"] = any(a.has_macros for a in attachments)
+            facts["attachment_has_qr"] = any(a.has_qr for a in attachments)
+            urls.extend(u for a in attachments for u in a.urls)  # QR links get URL reputation too
 
         # Payload keys the registry does not know: untrusted evidence, counted.
         coverage = _label_coverage(raw, payload)
@@ -226,8 +230,29 @@ class Splitter:
             label_coverage=coverage,
         )
         self._detect(alert, builder)
+        self._upstream_provenance(alert, builder, notes)
         self.notes = notes
         return alert
+
+    def _upstream_provenance(self, alert: Alert, builder: EvidenceBuilder, notes: list[str]) -> None:
+        """Another TrustGate stamped this text as derived from manipulated evidence: keep that suspicion.
+        Reads the full scan text, not the truncated evidence, so a stamp at the end of a long body counts."""
+        by_id = alert.evidence_by_id()
+        for ev_id, scan_text in builder.scan_parts:
+            ev = by_id[ev_id]
+            for stamp in read_stamps(scan_text, self.settings.provenance_key):
+                check = {True: "signature valid", False: "SIGNATURE INVALID", None: "unsigned"}[stamp.valid]
+                if stamp.valid is False:
+                    ev.flags = sorted(set(ev.flags) | {"unverified_provenance"})
+                signal = IOCSignal(source="upstream_provenance",
+                                   rule="upstream_ai_evasion" if stamp.ai_evasion else "upstream_taint",
+                                   score=0.9 if stamp.valid else 0.6, evidence_ids=[ev.id],
+                                   excerpt=f"from {stamp.src} ({check})")
+                if stamp.ai_evasion:
+                    alert.flag_ai_evasion(signal)
+                else:
+                    alert.ioc_signals.append(signal)
+                notes.append(f"upstream provenance stamp from {stamp.src}: {check}")
 
     def _email(self, raw: RawAlert, builder: EvidenceBuilder, facts: dict[str, Any], notes: list[str]) -> ParsedEmail | None:
         email_block = raw.email or {}

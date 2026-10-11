@@ -54,7 +54,8 @@ if metrics:
     col4.metric("p95 latency (ms)", metrics.get("latency_ms_p95") or 0)
     col5.metric("Audit chain", "ok" if metrics["audit_chain_ok"] else "BROKEN")
 
-tab_queue, tab_metrics, tab_audit, tab_pins = st.tabs(["Escalation queue", "Metrics", "Audit", "MCP pins"])
+tab_queue, tab_actions, tab_analysts, tab_metrics, tab_audit, tab_pins, tab_compliance = st.tabs(
+    ["Escalation queue", "Actions & rollback", "Analysts", "Metrics", "Audit", "MCP pins", "Compliance"])
 
 with tab_queue:
     st.subheader("Open escalations")
@@ -70,6 +71,13 @@ with tab_queue:
             if esc.get("tainted_spans"):
                 st.error("Tainted spans (the untrusted text that tipped it): " + ", ".join(esc["tainted_spans"]))
             st.json(esc.get("action", {}))
+            why = proxy_get(f"/v1/escalations/{esc['id']}/explain") or {}
+            for change in why.get("would_allow_if", []):
+                st.info(f"Would allow if {change}")
+            for block in why.get("never_automatic", []):
+                st.warning(f"Never automatic: {block}")
+            for note in why.get("notes", []):
+                st.caption(note)
             reason = st.text_input("Decision reason", key=f"r-{esc['id']}")
             c1, c2 = st.columns(2)
             if c1.button("Approve", key=f"a-{esc['id']}"):
@@ -120,6 +128,43 @@ with tab_metrics:
                   f"{head['stopped_by_gate']}/{head['passed_detector']} ({head['rate'] * 100:.0f}%)")
         st.dataframe(pd.DataFrame(summary["configs"]).T[["name", "asr@1", "asr@10", "escalation_rate",
                                                          "triage_accuracy", "data_leak_rate"]])
+
+with tab_actions:
+    st.subheader("Executed T1/T2 actions")
+    st.caption("Each action records its reverse. Security-reducing actions are rolled back automatically "
+               "when later evidence shows the alert was manipulated.")
+    for act in proxy_get("/v1/actions") or []:
+        label = f"{act['tool']}  ·  alert {act['alert_id']}  ·  {act['status']}"
+        with st.expander(label):
+            st.json({"args": act["args"], "undo": act["undo_tool"], "undo_args": act["undo_args"],
+                     "via": act["via"], "reverted_by": act.get("reverted_by"), "reason": act.get("revert_reason")})
+            if act["status"] == "executed" and act["undo_tool"]:
+                why_revert = st.text_input("Revert reason", key=f"rv-{act['id']}")
+                if st.button("Revert", key=f"rb-{act['id']}"):
+                    resp = httpx.post(f"{PROXY}/v1/actions/{act['id']}/revert", json={"reason": why_revert},
+                                      headers=headers, timeout=10)
+                    if resp.status_code >= 400:
+                        st.error(resp.json().get("detail", "revert failed"))
+                    else:
+                        st.rerun()
+
+with tab_analysts:
+    scores = proxy_get("/v1/analysts")
+    if scores and scores["analysts"]:
+        st.caption(scores["criteria"])
+        st.dataframe(pd.DataFrame(scores["analysts"]))
+    else:
+        st.info("No resolved escalations yet.")
+
+with tab_compliance:
+    framework = st.selectbox("Framework", ["cert-in", "dpdp", "iso27001"])
+    rep = proxy_get(f"/v1/compliance/{framework}")
+    if rep:
+        st.caption(rep["disclaimer"])
+        st.dataframe(pd.DataFrame(rep["controls"])[["id", "requirement", "status", "evidence"]])
+        import json as _json
+        st.download_button("Download evidence pack (JSON)", _json.dumps(rep, indent=2, default=str),
+                           file_name=f"trustgate-{framework}.json", mime="application/json")
 
 with tab_audit:
     alert_id = st.text_input("Filter by alert ID", "")

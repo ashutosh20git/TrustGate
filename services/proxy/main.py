@@ -29,9 +29,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from services.mock_soc.client import MockSOCClient
-from services.soc_tools import register_soc_tools, soc_tool_functions
+from services.soc_tools import register_soc_tools, soc_tool_functions, soc_undo_functions
 from trustgate.analysts import AnalystDirectory
 from trustgate.config import NotConfigured, Settings
+from trustgate.compliance import report as compliance_report
+from trustgate.counterfactual import explain
 from trustgate.gate import ESCALATED_MESSAGE, ApprovalExecutionFailed, ApprovalRefused, Gate, ToolConfigError
 from trustgate.ingest.enrich import ThreatIntel
 from trustgate.mcp.pinning import ToolPinRegistry
@@ -46,6 +48,10 @@ class AnalystDecision(BaseModel):
 
 
 class RepinRequest(BaseModel):
+    reason: str
+
+
+class RevertRequest(BaseModel):
     reason: str
 
 
@@ -83,7 +89,8 @@ def create_app(gate: Gate | None = None, settings: Settings | None = None,
         except NotConfigured:
             client = None  # placeholder: tools fail at execution, decisions still work
         if client is not None:
-            register_soc_tools(gate, soc_tool_functions(client, store, ThreatIntel(settings)))
+            register_soc_tools(gate, soc_tool_functions(client, store, ThreatIntel(settings)),
+                               undo=soc_undo_functions(client))
     pins = ToolPinRegistry(store)
     rng = random.Random()
     app = FastAPI(title="TrustGate proxy", version="2.0.0")
@@ -156,6 +163,41 @@ def create_app(gate: Gate | None = None, settings: Settings | None = None,
             raise HTTPException(502, str(exc)) from None
         except (ToolConfigError, NotConfigured) as exc:
             raise HTTPException(503, f"executor unavailable: {type(exc).__name__}") from None
+
+    @app.get("/v1/actions", dependencies=[Depends(require_analyst)])
+    def actions(alert_id: str | None = None, status: str | None = None) -> list[dict[str, Any]]:
+        """The ledger of executed T1/T2 actions and how each is undone."""
+        return [a.model_dump(mode="json") for a in store.actions(alert_id, status=status)]
+
+    @app.post("/v1/actions/{action_id}/revert")
+    def revert(action_id: str, body: RevertRequest, analyst: str = Depends(require_analyst)) -> dict[str, Any]:
+        try:
+            return gate.revert(action_id, by=analyst, reason=body.reason).model_dump(mode="json")
+        except KeyError:
+            raise HTTPException(404, "no executed action with that id") from None
+        except ToolConfigError as exc:
+            raise HTTPException(409, str(exc)) from None
+
+    @app.get("/v1/analysts", dependencies=[Depends(require_analyst)])
+    def analyst_scores() -> dict[str, Any]:
+        """Rubber-stamp detection: approval rate, canaries approved and decision speed per analyst."""
+        return store.analyst_scores()
+
+    @app.get("/v1/escalations/{esc_id}/explain", dependencies=[Depends(require_analyst)])
+    def explain_escalation(esc_id: str) -> dict[str, Any]:
+        """What would have let this action through, and what never will automatically."""
+        esc = store.get_escalation(esc_id)
+        if esc is None:  # canaries are explained like any item, so the queue does not reveal them
+            raise HTTPException(404)
+        return explain(gate, esc)
+
+    @app.get("/v1/compliance/{framework}", dependencies=[Depends(require_analyst)])
+    def compliance(framework: str) -> dict[str, Any]:
+        """Evidence pack for cert-in, dpdp or iso27001 (evidence for a review, not a determination)."""
+        try:
+            return compliance_report(store, framework)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from None
 
     @app.get("/v1/audit", dependencies=[Depends(require_analyst)])
     def audit(alert_id: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
