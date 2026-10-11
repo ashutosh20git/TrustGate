@@ -17,6 +17,7 @@ or runs **degraded** — never silently open — and has a tracking issue in `bd
 | 8 | Policy-pack values | Example critical assets / allowlists / entity lists | Replace in `packs/soc.json`, `packs/generic.json` with the real environment's | `tg-981` |
 | 9 | Hackathon rules decision | — | Confirm pre-build is allowed with Mitigata | `tg-e5d` |
 | 10 | Optional (Lakera, SIEM, OCR) | Off by default; first in the cut order | Lakera key / Splunk HEC / Tesseract as needed | `tg-0gx` |
+| 11 | Sender history from the MTA / SIEM | **Every email T1 action escalates** (attacker-cost floor: no fact a fresh campaign cannot buy) | Post `observed.sender_prior_messages` (messages this exact sender delivered before) with each email alert, from mail-gateway logs or a SIEM lookup | — (needs a `bd` issue) |
 
 ## How "fails closed" is wired
 
@@ -24,6 +25,7 @@ or runs **degraded** — never silently open — and has a tracking issue in `bd
 - In the gate (`trustgate/gate.py`), `NotConfigured` is caught by the fail-closed watchdog like any other error, so a T1–T3 action **escalates** instead of running.
 - `MTA_AUTHSERV_ID` unset → SPF/DKIM/DMARC facts stay `None` (unknown), which the re-check treats as not-benign.
 - A missing output-scanner backend makes **T3 fail closed** (no outbound without a leak scan).
+- A threat-intel lookup that errors (rate limit, outage, rejected key) sets `facts.enrichment_failed`, and T1 escalates until it succeeds. An unconfigured key only leaves that fact unknown.
 - Degraded-but-safe placeholders (detector models, threat intel) only ever *remove* evidence for "benign", so they cannot weaken the gate.
 
 ## Offline mode (no keys at all)

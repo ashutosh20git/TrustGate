@@ -59,11 +59,17 @@ class NoteArgs(AlertArgs):
 class RuleArgs(AlertArgs):
     rule: str
     reason: str = ""
+    ttl_hours: float | None = None
 
 
 class IndicatorArgs(AlertArgs):
     indicator: str
     reason: str = ""
+    ttl_hours: float | None = None
+
+
+def _expires_at(ttl_hours: float | None) -> str | None:
+    return None if ttl_hours is None else (_now() + dt.timedelta(hours=ttl_hours)).isoformat()
 
 
 class IpArgs(AlertArgs):
@@ -137,11 +143,13 @@ def create_app(database_url: str | None = None, token: str | None = None) -> Fas
 
     @app.post("/rules/suppress")
     def suppress(a: RuleArgs):
-        return record("rule.suppress", a.alert_id, {"rule": a.rule, "reason": a.reason})
+        return record("rule.suppress", a.alert_id, {"rule": a.rule, "reason": a.reason,
+                                                    "expires_at": _expires_at(a.ttl_hours)})
 
     @app.post("/whitelist/add")
     def whitelist(a: IndicatorArgs):
-        return record("whitelist.add", a.alert_id, {"indicator": a.indicator, "reason": a.reason})
+        return record("whitelist.add", a.alert_id, {"indicator": a.indicator, "reason": a.reason,
+                                                    "expires_at": _expires_at(a.ttl_hours)})
 
     @app.post("/firewall/block")
     def block(a: IpArgs):

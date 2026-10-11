@@ -31,6 +31,31 @@ deny contains "T1: AI-evasion attempt on this alert" if {
 	not input.ai_evasion_attempt == false
 }
 
+# T1: deterministic evidence floor (trustgate/evidence_floor.py). The re-check
+# model's verdict alone never decides: missing facts and facts an attacker can
+# buy for a fresh campaign cannot justify a security-reducing action.
+deny contains "T1: a threat-intel lookup failed; facts are missing, not clean" if {
+	input.tier == 1
+	not input.t1_evidence.enrichment_failed == false
+}
+
+deny contains "T1: core facts unknown" if {
+	input.tier == 1
+	not core_facts_known
+}
+
+deny contains "T1: no fact the attacker cannot cheaply control supports benign" if {
+	input.tier == 1
+	not input.t1_evidence.costly_ok == true
+}
+
+# T1 changes that outlive the alert (suppressions, allowlist entries) must
+# carry a bounded expiry; one alert's facts cannot justify a permanent change.
+deny contains "T1: persistent change needs a bounded expiry" if {
+	input.tier == 1
+	not input.scope.ok == true
+}
+
 # T2: disruptive. The target must be an exact typed-fact value.
 deny contains "T2: target not in typed facts" if {
 	input.tier == 2
@@ -59,3 +84,5 @@ cites_typed_fact if {
 	some c in input.cited
 	startswith(c, "facts.")
 }
+
+core_facts_known if count(input.t1_evidence.unknown_core) == 0

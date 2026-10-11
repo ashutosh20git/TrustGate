@@ -164,6 +164,11 @@ class Splitter:
             if parsed is not None:
                 urls.extend(parsed.urls)
                 sender_domain = parsed.from_domain
+                if sender_domain and facts.get("sender_domain") is None:
+                    try:
+                        facts["sender_domain"] = TypedFacts.model_validate({"sender_domain": sender_domain}).sender_domain
+                    except ValidationError:
+                        notes.append("sender domain is not a valid hostname; no campaign key")
                 for i, (filename, data) in enumerate(parsed.attachments):
                     attachments.append(parse_attachment(i, filename, data))
 
@@ -206,7 +211,10 @@ class Splitter:
                 facts["url_reputation"] = report.url_reputation
             if facts.get("sandbox_verdict", "not_run") == "not_run":
                 facts["sandbox_verdict"] = report.sandbox_verdict
+            if report.failed:
+                facts["enrichment_failed"] = True
             notes.extend(report.sources)
+            notes.extend(f"enrichment lookup failed: {f}" for f in report.failed)
 
         alert = Alert(
             alert_id=raw.alert_id,
@@ -268,6 +276,7 @@ class Splitter:
         except Exception as exc:
             report = EnrichmentReport()
             report.sources.append(f"enrichment failed: {type(exc).__name__}")
+            report.failed.append(f"enrichment: {type(exc).__name__}")
             return report
 
     def _detect(self, alert: Alert, builder: EvidenceBuilder) -> None:

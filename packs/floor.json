@@ -17,6 +17,32 @@
       "1": 60,
       "2": 20,
       "3": 20
+    },
+    "t1_evidence": {
+      "description": "Deterministic minimum evidence for any T1 (security-reducing) action, whatever the re-check model says. core_facts must be known; when a source lists costly_support, at least one of those conditions must hold (facts an attacker cannot buy cheaply for a fresh campaign).",
+      "core_facts": {
+        "email": [
+          "dmarc_pass"
+        ],
+        "network": [
+          "ip_abuse_score"
+        ],
+        "endpoint": [
+          "sandbox_verdict"
+        ],
+        "auth": [
+          "ip_abuse_score"
+        ]
+      },
+      "costly_support": {
+        "email": [
+          {
+            "fact": "sender_prior_messages",
+            "op": ">=",
+            "value": 3
+          }
+        ]
+      }
     }
   }
 }

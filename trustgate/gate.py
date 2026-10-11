@@ -17,8 +17,11 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import datetime as dt
 import functools
 import inspect
+import math
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
@@ -32,12 +35,13 @@ from pydantic import ValidationError
 
 from trustgate import value_match
 from trustgate.config import NotConfigured, Settings
+from trustgate.evidence_floor import t1_evidence
 from trustgate.models import Alert, GateDecision, ProposedAction, Trust, TypedFacts, Verdict
 from trustgate.output_scan import OutputScanner
 from trustgate.policy_client import PolicyPack, load_pack, policy_client
 from trustgate.ratelimit import rate_limiter
 from trustgate.recheck import RecheckResult, as_recheck, facts_only_recheck
-from trustgate.store import Store
+from trustgate.store import Escalation, Store
 from trustgate.tiers import Tier, UnknownTool
 
 log = structlog.get_logger("trustgate.gate")
@@ -57,6 +61,10 @@ class ActionEscalated(Exception):
 
 class ToolConfigError(ValueError):
     pass
+
+
+class ApprovalRefused(Exception):
+    """An analyst approval the gate will not execute (expired, changed since escalation, one approver)."""
 
 
 @dataclass
@@ -109,7 +117,15 @@ class Gate:
         self.output_scanner = output_scanner or OutputScanner(self.pack, self.settings)
         self.timeout_s = timeout_s or self.settings.check_timeout_s
         self.tools: dict[str, RegisteredTool] = {}
-        self._pool = ThreadPoolExecutor(max_workers=16, thread_name_prefix="trustgate-check")
+        # Checks run on a bounded pool. A check that times out keeps its slot until
+        # it really finishes, so hung dependencies show up as saturation and new
+        # decisions fail closed at once instead of queueing behind them.
+        self.max_inflight = max(1, self.settings.max_inflight_checks)
+        self._pool = ThreadPoolExecutor(max_workers=self.max_inflight, thread_name_prefix="trustgate-check")
+        self._slots = threading.BoundedSemaphore(self.max_inflight)
+        self._counter_lock = threading.Lock()
+        self._inflight = 0
+        self._abandoned = 0
         self._alert_ctx: contextvars.ContextVar[Alert | None] = contextvars.ContextVar("trustgate_alert", default=None)
 
     # --- registration ---------------------------------------------------------
@@ -233,15 +249,42 @@ class Gate:
         state = _State()
         with tracer.start_as_current_span("trustgate.decide") as span:
             span.set_attribute("trustgate.tool", action.tool)
-            try:
-                future = self._pool.submit(self._checks, action, alert, mcp, state)
-                decision = future.result(timeout=self.timeout_s)
-            except FutureTimeout:
-                decision = self._fail_closed(state, "TimeoutError")
-            except Exception as exc:  # the watchdog: any error escalates
-                decision = self._fail_closed(state, type(exc).__name__, exc)
+            decision = self._run_with_watchdog(action, alert, mcp, state)
             span.set_attribute("trustgate.decision", decision.decision)
         return self._finish(decision, action, start)
+
+    def _run_with_watchdog(self, action: ProposedAction, alert: Alert | None, mcp: dict[str, Any] | None,
+                           state: _State) -> GateDecision:
+        if not self._slots.acquire(blocking=False):
+            return self._fail_closed(state, "GateSaturated")
+        abandoned = threading.Event()
+        with self._counter_lock:
+            self._inflight += 1
+
+        def release(_future) -> None:
+            with self._counter_lock:
+                self._inflight -= 1
+                if abandoned.is_set():
+                    self._abandoned -= 1
+            self._slots.release()
+
+        try:
+            future = self._pool.submit(self._checks, action, alert, mcp, state)
+        except Exception as exc:
+            release(None)
+            return self._fail_closed(state, type(exc).__name__, exc)
+        future.add_done_callback(release)
+        try:
+            return future.result(timeout=self.timeout_s)
+        except FutureTimeout:
+            if not future.cancel():  # still running: it holds its slot until it ends
+                with self._counter_lock:
+                    if not future.done():
+                        abandoned.set()
+                        self._abandoned += 1
+            return self._fail_closed(state, "TimeoutError")
+        except Exception as exc:  # the watchdog: any error escalates
+            return self._fail_closed(state, type(exc).__name__, exc)
 
     def _fail_closed(self, state: _State, error: str, exc: Exception | None = None) -> GateDecision:
         reason = f"fail-closed: {error}"
@@ -335,6 +378,14 @@ class Gate:
                                 self._tainted(action, alert))
             if not any(c.startswith("facts.") for c in action.cited_evidence):
                 raise _Escalate(["no typed-fact citation"], self._tainted(action, alert))
+            evidence = t1_evidence(alert.facts, alert.source, self.pack.floor.get("t1_evidence"))
+            policy_input["t1_evidence"] = evidence.policy_input()
+            if evidence.reasons():
+                raise _Escalate(evidence.reasons(), self._tainted(action, alert))
+            scope = self._expiry_scope(action)
+            policy_input["scope"] = {k: v for k, v in scope.items() if k != "reason"}
+            if not scope["ok"]:
+                raise _Escalate([scope["reason"]])
 
         if tier == Tier.DISRUPTIVE:
             target, fact = value_match.target_of(self.pack, action.tool, action.args,
@@ -353,9 +404,16 @@ class Gate:
             raise _Escalate([f"policy: {r}" for r in result.deny] or ["policy: denied"],
                             self._tainted(action, alert) if tier == Tier.SECURITY_REDUCING else [])
 
-        # 5. Rate limit.
+        # 5. Rate limit, per tool and, for campaigns, per sender domain.
         if not self.limiter.hit(f"{self.pack.name}:t{int(tier)}:{action.tool}", self.pack.rate_limit(tier)):
             raise _Escalate(["rate limit"])
+        campaign = self.pack.campaign_limit(tier)
+        domain = alert.facts.sender_domain
+        if campaign is not None and domain and domain not in self.pack.shared_sender_domains:
+            limit, window_s = campaign
+            if not self.limiter.hit(f"{self.pack.name}:t{int(tier)}:sender:{domain}", limit, window_s):
+                raise _Escalate([f"campaign rate limit: over {limit} T{int(tier)} actions for one sender "
+                                 f"domain in {window_s // 60} min"])
         decision.reasons.append(f"T{int(tier)} checks passed")
         return decision
 
@@ -378,6 +436,19 @@ class Gate:
                     decision.redacted_args = {**action.args, **scan.redacted}
             except NotConfigured as exc:
                 decision.reasons.append(f"output scanner unavailable ({exc.what}); note stored unscanned")
+            # Text the agent writes after reading manipulated evidence is stored with
+            # that provenance, so whoever reads it later (an analyst, another agent)
+            # does not take it as a clean, trusted summary.
+            if alert is not None and (alert.ai_evasion_attempt or alert.ioc_signals):
+                ids = sorted({eid for sig in alert.ioc_signals for eid in sig.evidence_ids},
+                             key=lambda i: int(i.split("-")[1]) if i.split("-")[-1].isdigit() else 0)
+                tag = ("[TrustGate provenance: written by the AI agent after reading evidence flagged as "
+                       f"AI-evasion{' (' + ', '.join(ids[:5]) + ')' if ids else ''}; treat as untrusted] ")
+                tagged = dict(decision.redacted_args or action.args)
+                for key in text_args:
+                    tagged[key] = tag + str(tagged[key])
+                decision.redacted_args = tagged
+                decision.reasons.append("agent text tagged with untrusted provenance")
         # Silent failure 24: a summary concluding "benign" must agree with the facts-only verdict.
         if alert is not None and action.tool in self.pack.data.get("summary_tools", []) and action.verdict == "benign":
             try:
@@ -411,6 +482,19 @@ class Gate:
             decision.redacted_args = {**action.args, **scan.redacted}
             decision.reasons.append("outbound payload redacted: " + ", ".join(
                 sorted({f.entity for f in scan.findings if f.action == "redact"})))
+
+    def _expiry_scope(self, action: ProposedAction) -> dict[str, Any]:
+        spec = self.pack.expiry_spec(action.tool)
+        if not spec:
+            return {"required": False, "ok": True}
+        arg, max_hours = spec["ttl_arg"], float(spec["max_hours"])
+        try:
+            ttl = float(action.args.get(arg))
+        except (TypeError, ValueError):
+            ttl = None
+        ok = ttl is not None and math.isfinite(ttl) and 0 < ttl <= max_hours
+        return {"required": True, "ok": ok, "ttl_hours": ttl if ok else None, "max_hours": max_hours,
+                "reason": f"T1: {action.tool} changes more than this alert; it needs {arg} in (0, {max_hours:g}] hours"}
 
     @staticmethod
     def _citation_exists(citation: str, alert: Alert) -> bool:
@@ -453,10 +537,13 @@ class Gate:
             call_args["alert_id"] = alert_id
         return asyncio.run(tool.fn(**call_args)) if tool.is_async else tool.fn(**call_args)
 
-    def resolve_escalation(self, escalation_id: str, *, approve: bool, analyst: str, reason: str) -> dict[str, Any]:
+    def resolve_escalation(self, escalation_id: str, *, approve: bool, analyst: str, reason: str,
+                           second_analyst: str | None = None) -> dict[str, Any]:
         esc = self.store.get_escalation(escalation_id)
         if esc is None or esc.status != "open":
             raise KeyError(escalation_id)
+        if not (analyst or "").strip():
+            raise ApprovalRefused("an analyst identity is required")
         if esc.canary:
             outcome = "canary_missed" if approve else "canary_caught"
             self.store.close_escalation(escalation_id, status="approved" if approve else "rejected",
@@ -466,21 +553,76 @@ class Gate:
             return {"canary": outcome, "executed": False}
         result: Any = None
         if approve:
+            # An approval is checked again when it is used: the world may have moved
+            # on since the escalation was raised, and one person is not enough for
+            # disruptive or outbound actions.
             action = ProposedAction.model_validate(esc.action)
-            tool = self.tools.get(action.tool)
-            if tool is None or tool.fn is None:
-                raise ToolConfigError(f"no executor registered for {action.tool}")
-            result = self._invoke(tool, action.alert_id, action.args)
+            try:
+                tool = self._approval_executor(esc, action, analyst, second_analyst)
+                args = self._approved_args(action, esc)
+            except ApprovalRefused as refused:
+                self.store.audit("analyst", alert_id=esc.alert_id, tool=esc.tool,
+                                 details={"escalation_id": escalation_id, "approved": False, "refused": str(refused),
+                                          "analyst": analyst, "second_analyst": second_analyst})
+                raise
+            result = self._invoke(tool, action.alert_id, args)
         self.store.close_escalation(escalation_id, status="approved" if approve else "rejected", analyst=analyst,
                                     reason=reason, result={"result": result} if approve else None)
         self.store.audit("analyst", alert_id=esc.alert_id, tool=esc.tool,
                          details={"escalation_id": escalation_id, "approved": approve, "analyst": analyst,
-                                  "reason": reason})
+                                  "second_analyst": second_analyst, "reason": reason})
         return {"executed": approve, "result": result}
 
+    def _approval_executor(self, esc: Escalation, action: ProposedAction, analyst: str,
+                           second_analyst: str | None) -> RegisteredTool:
+        created = esc.created_at if esc.created_at.tzinfo else esc.created_at.replace(tzinfo=dt.timezone.utc)
+        age_s = (dt.datetime.now(dt.timezone.utc) - created).total_seconds()
+        if age_s > self.settings.escalation_ttl_s:
+            self.store.close_escalation(esc.id, status="expired", analyst=analyst,
+                                        reason=f"approval after {int(age_s)} s; limit {int(self.settings.escalation_ttl_s)} s")
+            raise ApprovalRefused("escalation expired; the agent must propose the action again")
+        try:
+            tier = self.tier_of(action.tool)
+        except UnknownTool:
+            raise ApprovalRefused("tool is no longer in the policy pack") from None
+        if esc.tier is not None and int(tier) != esc.tier:
+            raise ApprovalRefused(f"tool tier changed since escalation (T{esc.tier} -> T{int(tier)})")
+        if "/" in action.tool:
+            server, name = action.tool.split("/", 1)
+            pin = self.store.get_pin(server, name)
+            if pin is not None and pin.status != "pinned":
+                raise ApprovalRefused(f"MCP tool is {pin.status} since escalation")
+        if tier >= Tier.DISRUPTIVE:
+            second = (second_analyst or "").strip().lower()
+            if not second or second == analyst.strip().lower():
+                raise ApprovalRefused(f"T{int(tier)} approvals need a second, different analyst")
+        tool = self.tools.get(action.tool)
+        if tool is None or tool.fn is None:
+            raise ToolConfigError(f"no executor registered for {action.tool}")
+        return tool
+
+    def _approved_args(self, action: ProposedAction, esc: Escalation) -> dict[str, Any]:
+        """T3 payloads are scanned again: floor-blocked data never leaves, approved or not."""
+        if esc.tier != int(Tier.OUTBOUND):
+            return action.args
+        fields = value_match.outbound_fields(self.pack, action.tool, action.args)
+        try:
+            scan = self.output_scanner.scan(fields)
+        except NotConfigured as exc:
+            raise ApprovalRefused(f"output scanner unavailable ({exc.what}); outbound approval fails closed") from None
+        if scan.blocked_entities:
+            raise ApprovalRefused(f"{', '.join(scan.blocked_entities)} may never leave, even with approval")
+        if any(f.action == "redact" for f in scan.findings):
+            return {**action.args, **scan.redacted}
+        return action.args
+
     def health(self) -> dict[str, Any]:
+        with self._counter_lock:
+            inflight, abandoned = self._inflight, self._abandoned
         checks: dict[str, Any] = {"pack": self.pack.name, "mode": self.mode,
-                                  "policy": bool(getattr(self.policy, "healthy", lambda: False)())}
+                                  "policy": bool(getattr(self.policy, "healthy", lambda: False)()),
+                                  "checks_inflight": inflight, "checks_abandoned": abandoned,
+                                  "saturated": inflight >= self.max_inflight}
         try:
             checks["rate_limiter"] = self.limiter.hit("healthz", 10**9)
         except Exception as exc:

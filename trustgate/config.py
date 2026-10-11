@@ -63,6 +63,9 @@ class Settings:
     splunk_hec_token: str | None = field(default_factory=lambda: _env("SPLUNK_HEC_TOKEN"))
     # Watchdog and splitter limits
     check_timeout_s: float = field(default_factory=lambda: _env_float("TRUSTGATE_CHECK_TIMEOUT_S", 10.0))
+    max_inflight_checks: int = field(default_factory=lambda: _env_int("TRUSTGATE_MAX_INFLIGHT_CHECKS", 16))
+    # Escalations
+    escalation_ttl_s: float = field(default_factory=lambda: _env_float("TRUSTGATE_ESCALATION_TTL_S", 4 * 3600.0))
     max_field_chars: int = field(default_factory=lambda: _env_int("TRUSTGATE_MAX_FIELD_CHARS", 4000))
     # Ingest
     mta_authserv_id: str | None = field(default_factory=lambda: _env("TRUSTGATE_MTA_AUTHSERV_ID"))

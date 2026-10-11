@@ -29,6 +29,7 @@ class EnrichmentReport:
     sandbox_verdict: str = "not_run"
     sender_domain_age_days: int | None = None
     sources: list[str] = field(default_factory=list)  # "abuseipdb", "virustotal: not configured", ...
+    failed: list[str] = field(default_factory=list)   # lookups that errored: their facts are missing, not clean
 
 
 def _worse(a: str, b: str, order: dict[str, int]) -> str:
@@ -59,7 +60,9 @@ class ThreatIntel:
            retry=retry_if_exception_type((httpx.TransportError, httpx.HTTPStatusError)), reraise=True)
     def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
         resp = self._client.request(method, url, **kwargs)
-        if resp.status_code == 429 or resp.status_code >= 500:
+        # Rate limits, outages and rejected keys are failures, not "no data":
+        # swallowing them would leave a fact unknown with nothing to show why.
+        if resp.status_code in (401, 403, 429) or resp.status_code >= 500:
             resp.raise_for_status()
         return resp
 
@@ -175,16 +178,19 @@ class ThreatIntel:
                           ("virustotal", self.s.virustotal_api_key), ("urlhaus", self.s.urlhaus_auth_key)):
             report.sources.append(name if key else f"{name}: not configured")
 
-        scores = [s for s in (self._safe(self.abuseipdb_score, ip) for ip in ips) if s is not None]
+        def safe(fn, arg):
+            return self._safe(fn, arg, report)
+
+        scores = [s for s in (safe(self.abuseipdb_score, ip) for ip in ips) if s is not None]
         report.ip_abuse_score = max(scores) if scores else None
         for ip in ips[:5]:
-            report.asn = report.asn or self._safe(self.otx_asn, ip)
+            report.asn = report.asn or safe(self.otx_asn, ip)
 
         if urls:
             reputation = "unknown"
             for url in urls[:10]:
                 for lookup in (self.virustotal_url, self.urlhaus):
-                    verdict = self._safe(lookup, url) or "unknown"
+                    verdict = safe(lookup, url) or "unknown"
                     reputation = verdict if reputation == "unknown" else _worse(reputation, verdict, _REPUTATION_ORDER)
             report.url_reputation = reputation
         else:
@@ -192,16 +198,19 @@ class ThreatIntel:
 
         sandbox = "not_run"
         for sha in file_hashes[:10]:
-            verdict = self._safe(self.virustotal_file, sha) or "not_run"
+            verdict = safe(self.virustotal_file, sha) or "not_run"
             sandbox = _worse(sandbox, verdict, _SANDBOX_ORDER)
         report.sandbox_verdict = sandbox
 
-        report.sender_domain_age_days = self._safe(self.domain_age_days, sender_domain)
+        report.sender_domain_age_days = safe(self.domain_age_days, sender_domain)
         return report
 
     @staticmethod
-    def _safe(fn, arg):
+    def _safe(fn, arg, report: EnrichmentReport):
         try:
             return fn(arg)
-        except Exception:
-            return None  # a failed lookup leaves the fact unknown
+        except Exception as exc:
+            # A failed lookup leaves the fact unknown, and says so: the gate
+            # will not let a T1 action rest on a lookup that never happened.
+            report.failed.append(f"{getattr(fn, '__name__', 'lookup')}: {type(exc).__name__}")
+            return None

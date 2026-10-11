@@ -106,6 +106,16 @@ class ToolPin(SQLModel, table=True):
     last_seen_schema: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
 
 
+class ToolResponseShape(SQLModel, table=True):
+    """Baseline shape of an MCP tool's successful responses (content types, structured keys)."""
+
+    server: str = Field(primary_key=True)
+    name: str = Field(primary_key=True)
+    content_types: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    structured_keys: list[str] | None = Field(default=None, sa_column=Column(JSON))
+    first_seen: dt.datetime = Field(default_factory=_now)
+
+
 class Store:
     def __init__(self, database_url: str | None = None, *, settings: Settings | None = None):
         self.settings = settings or Settings()
@@ -192,6 +202,39 @@ class Store:
             except httpx.HTTPError:
                 log.warning("trustgate.siem_export_failed", audit_id=rec.id)
 
+    def rollout_report(self, *, min_samples: int = 50) -> dict[str, Any]:
+        """Monitor-mode readiness per tool: what enforcing would have blocked, and why.
+
+        A tool is ready to enforce once it has min_samples monitor decisions and
+        none failed closed (a failing dependency would block everything once
+        enforced). Would-block counts are shown, not judged: blocked attacks are
+        the point, so an analyst reviews the top reasons before switching.
+        """
+        tools: dict[str, dict[str, Any]] = {}
+        for rec in self.audit_trail(limit=1_000_000):
+            if rec.kind != "decision" or rec.mode != "monitor" or not rec.tool:
+                continue
+            row = tools.setdefault(rec.tool, {"tool": rec.tool, "tier": rec.tier, "decisions": 0,
+                                              "would_block": 0, "fail_closed": 0, "_reasons": {}})
+            row["decisions"] += 1
+            if rec.decision != "allow":
+                row["would_block"] += 1
+                for reason in rec.reasons or []:
+                    if reason != "monitor mode: would block":
+                        row["_reasons"][reason] = row["_reasons"].get(reason, 0) + 1
+            if (rec.details or {}).get("fail_closed"):
+                row["fail_closed"] += 1
+        out = []
+        for row in sorted(tools.values(), key=lambda r: r["tool"]):
+            reasons = row.pop("_reasons")
+            row["would_block_rate"] = round(row["would_block"] / row["decisions"], 4)
+            row["top_reasons"] = [r for r, _ in sorted(reasons.items(), key=lambda kv: -kv[1])[:3]]
+            row["ready_to_enforce"] = row["decisions"] >= min_samples and row["fail_closed"] == 0
+            out.append(row)
+        return {"criteria": f"ready = at least {min_samples} monitor decisions and none failed closed; "
+                            "review top would-block reasons before enforcing",
+                "tools": out}
+
     # --- escalations ----------------------------------------------------------
 
     def open_escalation(self, action: ProposedAction, decision: GateDecision, *, canary: bool = False) -> Escalation:
@@ -249,6 +292,22 @@ class Store:
         with self.session() as s:
             s.merge(pin)
             s.commit()
+
+    def get_shape(self, server: str, name: str) -> ToolResponseShape | None:
+        with self.session() as s:
+            return s.get(ToolResponseShape, (server, name))
+
+    def put_shape(self, shape: ToolResponseShape) -> None:
+        with self.session() as s:
+            s.merge(shape)
+            s.commit()
+
+    def delete_shape(self, server: str, name: str) -> None:
+        with self.session() as s:
+            row = s.get(ToolResponseShape, (server, name))
+            if row is not None:
+                s.delete(row)
+                s.commit()
 
     def pins(self, server: str | None = None) -> list[ToolPin]:
         with self.session() as s:

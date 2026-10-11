@@ -6,6 +6,11 @@ them with its tool-poisoning rules. A tool whose hash later changes (a rug pull)
 is disabled until an analyst re-pins it through an explicit approval step that
 is written to the audit trail. A tool name already served by another server
 (shadowing) or a description that names another server's tools is quarantined.
+
+A pin covers what a tool says, not what it returns. The first successful
+response sets a baseline shape (content types, structured-content keys); a later
+response with a new content type or new keys disables the tool the same way a
+changed description does.
 """
 
 from __future__ import annotations
@@ -17,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from trustgate.detector import Detector
-from trustgate.store import Store, ToolPin, _now
+from trustgate.store import Store, ToolPin, ToolResponseShape, _now
 
 
 def tool_digest(name: str, description: str, input_schema: dict[str, Any] | None) -> str:
@@ -100,6 +105,37 @@ class ToolPinRegistry:
             results.append(PinResult(server, name, "disabled", digest, reasons, "changed"))
         return results
 
+    def check_response(self, server: str, name: str, content_types: list[str],
+                       structured_keys: list[str] | None) -> list[str]:
+        """Compare a successful response with the tool's baseline. Returns drift reasons (empty = fine)."""
+        baseline = self.store.get_shape(server, name)
+        if baseline is None:
+            self.store.put_shape(ToolResponseShape(server=server, name=name, content_types=sorted(content_types),
+                                                   structured_keys=structured_keys))
+            return []
+        reasons: list[str] = []
+        new_types = sorted(set(content_types) - set(baseline.content_types))
+        if new_types and baseline.content_types:
+            reasons.append(f"response content types changed: new {', '.join(new_types)}")
+        if structured_keys is not None:
+            if baseline.structured_keys is None:
+                reasons.append("response started returning structured content")
+            else:
+                new_keys = sorted(set(structured_keys) - set(baseline.structured_keys))
+                if new_keys:
+                    reasons.append(f"response has new structured keys: {', '.join(new_keys[:8])}")
+        if not baseline.content_types and content_types:
+            baseline.content_types = sorted(content_types)  # first non-empty response fills the baseline
+            self.store.put_shape(baseline)
+        if reasons:
+            pin = self.store.get_pin(server, name)
+            if pin is not None:
+                pin.status = "disabled"
+                pin.reasons = ["response shape changed since baseline"] + reasons
+                self.store.put_pin(pin)
+                self._audit(server, name, "response_drift", "disabled", pin.reasons, pin.sha256)
+        return reasons
+
     def is_callable(self, server: str, name: str, digest: str | None = None) -> bool:
         pin = self.store.get_pin(server, name)
         if pin is None or pin.status != "pinned":
@@ -120,6 +156,7 @@ class ToolPinRegistry:
         pin.approved_by = approver
         pin.pinned_at = _now()
         self.store.put_pin(pin)
+        self.store.delete_shape(server, name)  # the next response sets a fresh baseline
         self.store.audit("mcp_pin", tool=f"{server}/{name}", details={
             "event": "re-pinned", "approver": approver, "reason": reason,
             "previous_sha256": previous, "sha256": pin.sha256})
