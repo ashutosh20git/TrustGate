@@ -179,9 +179,12 @@ service (Compose).
    would block and blocks nothing.
 2. **Feed sender history.** Post `observed.sender_prior_messages` with each email
    alert from your mail gateway or SIEM; without it, every email T1 action escalates.
-3. **Retrain the re-check model** on your own labelled alerts
-   (`scripts/train_recheck.py`). The image's starter model was trained on synthetic
-   alerts. Or run Ollama and set `TRUSTGATE_RECHECK_BACKEND=ollama`.
+3. **Retrain the re-check model** on your own labelled alerts and analyst decisions
+   (`scripts/train_recheck.py --data tickets.jsonl --feedback`) and check its holdout
+   false-benign rate. The image's starter model was trained on synthetic alerts. Or run
+   Ollama and set `TRUSTGATE_RECHECK_BACKEND=ollama`. Both run beside the rule scorecard.
+   Measure with `python -m eval.recheck_bench`, and watch `recheck_analyst_agreement` in
+   `/v1/metrics` for drift. Details: [RECHECK.md](RECHECK.md).
 4. **Replace the example policy values** (critical assets, allowlists) in
    `packs/soc.json` with yours. The proxy and OPA both read the packs from the
    image, so ship yours in an image built on TrustGate's and set `TRUSTGATE_IMAGE`

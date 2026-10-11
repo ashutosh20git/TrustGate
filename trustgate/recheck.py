@@ -7,6 +7,14 @@ conditional instruction to key on (the MELON bypass).
 
 Backends, as in the blueprint: Ollama + a small Qwen/Llama model in JSON mode
 (default), or an XGBoost classifier over the same typed facts.
+
+Reliability (docs/RECHECK.md):
+  * The XGBoost model sees every fact in recheck_view(), not a subset.
+  * "benign" needs confidence: below TRUSTGATE_RECHECK_MIN_CONFIDENCE (default 0.9)
+    the classifier's benign becomes unsure, which escalates.
+  * Two judges: the configured backend runs with the rule scorecard
+    (trustgate/scorecard.py), and benign needs both (TRUSTGATE_RECHECK_SCORECARD=off
+    to disable). Either saying malicious makes it malicious.
 """
 
 from __future__ import annotations
@@ -33,14 +41,13 @@ Facts (JSON):
 Respond with JSON only: {"verdict": "malicious" | "benign" | "unsure"}"""
 )
 
-FEATURE_ORDER = (
-    "spf_pass", "dkim_pass", "dmarc_pass", "sender_domain_age_days", "url_reputation", "ip_abuse_score",
-    "sandbox_verdict", "ioc_ip_count", "ioc_hash_count", "asn_known", "attachment_count",
-    "attachment_parse_failed", "attachment_hidden_content", "attachment_has_macros",
-)
+# Every fact the re-check is given, in a fixed order: the model must not be blind to
+# any of them (it used to see 14 of 21, missing sender history and compromised-account signs).
+FEATURE_ORDER = tuple(TypedFacts().recheck_view())
 _ENUMS = {
     "url_reputation": {"unknown": -1, "clean": 0, "suspicious": 1, "malicious": 2},
     "sandbox_verdict": {"not_run": -1, "clean": 0, "suspicious": 1, "malicious": 2},
+    "asset_criticality": {"low": 0, "medium": 1, "high": 2, "critical": 3},
 }
 _VERDICTS = ("benign", "unsure", "malicious")
 
@@ -54,6 +61,8 @@ class RecheckResult:
     verdict: Verdict
     tokens: int = 0
     backend: str = ""
+    confidence: float | None = None  # the backend's probability for its verdict, when it has one
+    reasons: tuple[str, ...] = ()
 
 
 class Recheck(Protocol):
@@ -98,7 +107,7 @@ def vectorise(facts: TypedFacts) -> list[float]:
     for key in FEATURE_ORDER:
         value = view[key]
         if key in _ENUMS:
-            row.append(float(_ENUMS[key][value]))
+            row.append(float("nan") if value is None else float(_ENUMS[key][value]))
         elif value is None:
             row.append(float("nan"))  # XGBoost handles missing values natively
         else:
@@ -120,14 +129,52 @@ class XGBoostRecheck:
         try:
             self._booster.load_model(settings.xgb_model_path)
         except Exception as exc:
-            raise NotConfigured(settings.xgb_model_path, "train it with eval/train_recheck.py on labelled datasets") from exc
+            raise NotConfigured(settings.xgb_model_path, "train it with scripts/train_recheck.py") from exc
+        # A model trained on another feature list would read facts in the wrong columns.
+        if list(self._booster.feature_names or []) != list(FEATURE_ORDER):
+            raise NotConfigured(settings.xgb_model_path,
+                                "trained on a different fact list; retrain with scripts/train_recheck.py")
         self._xgb = xgboost
+        self.min_confidence = settings.recheck_min_confidence
 
     def __call__(self, facts: TypedFacts) -> RecheckResult:
         matrix = self._xgb.DMatrix([vectorise(facts)], feature_names=list(FEATURE_ORDER))
-        probs = self._booster.predict(matrix)[0]
-        verdict = _VERDICTS[int(max(range(len(probs)), key=lambda i: probs[i]))]
-        return RecheckResult(verdict=verdict, backend="xgboost")
+        probs = [float(p) for p in self._booster.predict(matrix)[0]]
+        best = max(range(len(probs)), key=lambda i: probs[i])
+        verdict, confidence = _VERDICTS[best], probs[best]
+        reasons: tuple[str, ...] = ()
+        # A confident "benign" only: a 51% benign is not evidence enough to lower security.
+        if verdict == "benign" and confidence < self.min_confidence:
+            verdict = "unsure"
+            reasons = (f"benign probability {confidence:.2f} below {self.min_confidence:.2f}",)
+        return RecheckResult(verdict=verdict, backend="xgboost", confidence=round(confidence, 4), reasons=reasons)
+
+
+class EnsembleRecheck:
+    """Two independent judges: the configured backend and the rule scorecard.
+    benign only if both say benign; malicious if either does; otherwise unsure."""
+
+    def __init__(self, model: Callable[[TypedFacts], RecheckResult]):
+        self.model = model
+        self.backend = f"{getattr(model, 'backend', 'model')}+scorecard"
+
+    def __call__(self, facts: TypedFacts) -> RecheckResult:
+        from trustgate.scorecard import score
+
+        result = self.model(facts)
+        card = score(facts)
+        verdicts = {result.verdict, card.verdict}
+        if "malicious" in verdicts:
+            verdict: Verdict = "malicious"
+        elif verdicts == {"benign"}:
+            verdict = "benign"
+        else:
+            verdict = "unsure"
+        reasons = tuple(result.reasons) + tuple(f"scorecard: {r}" for r in card.malicious + card.warnings)
+        if card.verdict == "unsure" and not card.warnings:
+            reasons += ("scorecard: no fact positively supports benign",)
+        return RecheckResult(verdict=verdict, tokens=result.tokens, backend=self.backend,
+                             confidence=result.confidence, reasons=reasons)
 
 
 def facts_only_recheck(settings: Settings | None = None) -> Callable[[TypedFacts], RecheckResult]:
@@ -143,7 +190,7 @@ def facts_only_recheck(settings: Settings | None = None) -> Callable[[TypedFacts
             raise error
 
         return unavailable
-    return impl
+    return EnsembleRecheck(impl) if settings.recheck_scorecard else impl
 
 
 def as_recheck(fn: Callable[[TypedFacts], Verdict | RecheckResult]) -> Callable[[TypedFacts], RecheckResult]:

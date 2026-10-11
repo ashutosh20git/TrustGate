@@ -53,6 +53,11 @@ class Settings:
     ollama_host: str = field(default_factory=lambda: _env("OLLAMA_HOST", "http://localhost:11434"))
     recheck_model: str | None = field(default_factory=lambda: _env("TRUSTGATE_RECHECK_MODEL"))
     xgb_model_path: str = field(default_factory=lambda: _env("TRUSTGATE_XGB_MODEL", "models/recheck_xgb.json"))
+    # The classifier's "benign" counts only at or above this probability; below it, unsure.
+    recheck_min_confidence: float = field(default_factory=lambda: _env_float("TRUSTGATE_RECHECK_MIN_CONFIDENCE", 0.9))
+    # Run the rule scorecard beside the model; benign needs both ("off" to disable).
+    recheck_scorecard: bool = field(default_factory=lambda: (_env("TRUSTGATE_RECHECK_SCORECARD", "on") or "on").lower()
+                                    not in ("off", "0", "false", "no"))
     # Rate limits
     redis_url: str | None = field(default_factory=lambda: _env("REDIS_URL"))
     ratelimit_backend: str = field(default_factory=lambda: _env("TRUSTGATE_RATELIMIT_BACKEND", "redis"))
@@ -76,6 +81,8 @@ class Settings:
     # Ingest
     mta_authserv_id: str | None = field(default_factory=lambda: _env("TRUSTGATE_MTA_AUTHSERV_ID"))
     ti_cache_dir: str = field(default_factory=lambda: _env("TRUSTGATE_TI_CACHE", "data/cache/ti"))
+    # Threat-intel sources that must independently call a link clean before it counts as clean.
+    ti_quorum: int = field(default_factory=lambda: _env_int("TRUSTGATE_TI_QUORUM", 1))
     virustotal_api_key: str | None = field(default_factory=lambda: _env("VIRUSTOTAL_API_KEY"))
     abuseipdb_api_key: str | None = field(default_factory=lambda: _env("ABUSEIPDB_API_KEY"))
     otx_api_key: str | None = field(default_factory=lambda: _env("OTX_API_KEY"))

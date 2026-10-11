@@ -249,6 +249,8 @@ def create_app(gate: Gate | None = None, settings: Settings | None = None,
             "ai_evasion_alerts": sum(1 for a in alerts if a.ai_evasion_attempt),
             "mcp_pins": dict(Counter(p.status for p in store.pins())),
             "audit_chain_ok": store.verify_audit_chain(),
+            # Drift: how often the facts-only verdict matched analysts on resolved T1 escalations.
+            "recheck_analyst_agreement": store.recheck_agreement(),
             "mode": gate.mode,
             "pack": gate.pack.name,
         }

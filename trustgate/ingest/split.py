@@ -294,7 +294,7 @@ class Splitter:
             auth = live_auth(data, parsed.from_domain, envelope)
         if auth.source == "none":
             notes.append("email auth: TRUSTGATE_MTA_AUTHSERV_ID not set and no envelope; SPF/DKIM/DMARC unknown")
-        for key in ("spf_pass", "dkim_pass", "dmarc_pass"):
+        for key in ("spf_pass", "dkim_pass", "dmarc_pass", "arc_pass", "bimi_pass"):
             if facts.get(key) is None and getattr(auth, key) is not None:
                 facts[key] = getattr(auth, key)
 

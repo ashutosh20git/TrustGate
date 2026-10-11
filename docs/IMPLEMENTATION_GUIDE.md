@@ -220,6 +220,8 @@ is about producing and checking these objects.
 | Compromised-account signals | `reply_to_mismatch`, `sender_first_link`, `sender_first_attachment`, `sender_new_sending_ip` | any `True` cancels sender history as support |
 | Campaign keys | `sender_domain`, `url_domains`, `content_bands` (`b<n>:<16 hex>`) | for rate limits only |
 | Failure | `enrichment_failed` | a threat-intel lookup errored: facts are *missing*, not clean |
+| Organisation history | `org_replied_to_sender`, `org_sender_domain_messages`, `org_url_domain_first_seen`, `org_attachment_prevalence` | from SIEM / mail gateway; "someone here replied" is costly support, an unseen link domain cancels history ([RECHECK.md](RECHECK.md)) |
+| Richer signals | `arc_pass`, `bimi_pass` (trusted header only), `cert_age_days`, `domain_first_seen_days`, `asset_criticality`, `process_signed` | used by the scorecard and the model |
 
 Every identifier is validated by regex. The charsets leave no room for sentences, so an
 identifier cannot smuggle an instruction into the re-check.
@@ -679,6 +681,11 @@ would tell a hijacked agent which check to get around.
 ## 11. The checks in depth
 
 ### 11.1 T1: the facts-only re-check (`trustgate/recheck.py`)
+
+> **Reliability layer:** the configured re-check is now an *ensemble*: the model and a rule
+> scorecard (`trustgate/scorecard.py`) must both say benign; the classifier's benign needs
+> probability ≥ 0.9; the model sees all 31 re-check facts; and a benchmark measures the
+> false-benign rate on attacker-affordable facts. See **[RECHECK.md](RECHECK.md)**.
 
 The core idea. Before any security-reducing action, the verdict is recomputed **from typed
 facts alone**. If the agent says "benign" but the facts say otherwise, the attacker's text

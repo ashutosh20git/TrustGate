@@ -52,6 +52,9 @@ jobs:
       - name: Eval smoke (offline simulator) + regression guard
         run: python scripts/ci_eval_guard.py
 
+      - name: Re-check guard (false-benign rate on attacker-affordable facts)
+        run: python -m eval.recheck_bench --check
+
   deploy:
     runs-on: ubuntu-latest
     steps:

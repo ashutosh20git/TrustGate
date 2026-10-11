@@ -13,7 +13,9 @@ The facts-only re-check is a model, and it can be wrong in two silent ways:
   campaign cannot buy cheaply (for email: the sender has delivered mail before).
 * A compromised real account. Sender history is costly to fake, but a hijacked
   mailbox has it. When the known sender behaves unusually (a Reply-To on another
-  domain, its first link or attachment, a new sending IP) history stops counting.
+  domain, its first link or attachment, a new sending IP, a link domain nobody in
+  the organisation has seen) history stops counting. Organisation history counts
+  as costly support too: an attacker can send mail but cannot make staff reply.
 * Citations that prove nothing. Citing any facts.* name used to be enough, even
   one unrelated to "benign" (facts.ioc_ips). At least one cited fact must now
   actually support benign (benign_support conditions).
@@ -94,7 +96,8 @@ def t1_evidence(facts: TypedFacts, source: str, config: dict[str, Any] | None,
             result.unknown_core.append(name)
     result.sender_anomalies = [name for name in config.get("costly_negated_by", []) if getattr(facts, name, None) is True]
     for cond in conditions:
-        if _holds(facts, cond) and not (result.sender_anomalies and cond["fact"].startswith("sender_")):
+        # History (the sender's or the organisation's) is exactly what a hijacked mailbox has.
+        if _holds(facts, cond) and not (result.sender_anomalies and cond["fact"].startswith(("sender_", "org_"))):
             result.costly_support.append(f"{cond['fact']} {cond.get('op', '>=')} {cond['value']}")
     cited_facts = {c.split(".", 1)[1] for c in (cited or []) if c.startswith("facts.")}
     for cond in config.get("benign_support", []):

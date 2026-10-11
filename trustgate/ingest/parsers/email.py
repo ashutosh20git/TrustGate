@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 import mailparser
 
-AUTH_RESULT = re.compile(r"\b(spf|dkim|dmarc)\s*=\s*([a-z]+)", re.I)
+AUTH_RESULT = re.compile(r"\b(spf|dkim|dmarc|arc|bimi)\s*=\s*([a-z]+)", re.I)
 HEADER_DOMAIN = re.compile(r"\bheader\.(?:d|i|from)\s*=\s*@?([A-Za-z0-9.-]+)", re.I)
 URL = re.compile(r"\bhttps?://[^\s<>\"')\]]+", re.I)
 UNTRUSTED_HEADERS = ("Reply-To", "Return-Path", "Sender", "X-Mailer", "List-Unsubscribe", "Message-ID")
@@ -29,6 +29,8 @@ class AuthFacts:
     spf_pass: bool | None = None
     dkim_pass: bool | None = None
     dmarc_pass: bool | None = None
+    arc_pass: bool | None = None   # ARC chain (forwarded mail), from the trusted header only
+    bimi_pass: bool | None = None  # BIMI needs a verified mark certificate: costly to fake
     source: str = "none"  # "mta_header", "live", "none"
 
 
@@ -76,6 +78,8 @@ def auth_from_headers(headers: list[str], trusted_authserv_id: str | None) -> tu
             spf_pass=_result_to_bool(results.get("spf")),
             dkim_pass=_result_to_bool(results.get("dkim")),
             dmarc_pass=_result_to_bool(results.get("dmarc")),
+            arc_pass=_result_to_bool(results.get("arc")),
+            bimi_pass=_result_to_bool(results.get("bimi")),
             source="mta_header",
         )
     for value in headers[1:]:

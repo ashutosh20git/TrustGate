@@ -305,6 +305,48 @@ class Store:
                             f">= {high_approval:.0%} or median decision under {fast_s:g} s",
                 "analysts": out}
 
+    def feedback_examples(self) -> list[tuple[Alert, str]]:
+        """Labelled examples from what analysts decided, for retraining the re-check.
+
+        * A resolved T1 escalation where the agent said "benign": approved means the
+          analyst agreed it was benign; rejected means it was not.
+        * An executed T1 action later reverted (by an analyst, or automatically because
+          the alert turned out to be manipulated): the "benign" call was wrong.
+        Canaries are excluded: they are planted, not real alerts.
+        """
+        out: list[tuple[Alert, str]] = []
+        seen: set[str] = set()
+        for esc in self.escalations(None, limit=1_000_000):
+            if esc.canary or esc.tier != 1 or esc.status not in ("approved", "rejected"):
+                continue
+            if (esc.action or {}).get("verdict") != "benign" or esc.alert_id in seen:
+                continue
+            alert = self.get_alert(esc.alert_id)
+            if alert is not None:
+                out.append((alert, "benign" if esc.status == "approved" else "malicious"))
+                seen.add(esc.alert_id)
+        for rec in self.actions(status="reverted", limit=1_000_000):
+            if rec.tier != 1:
+                continue
+            alert = self.get_alert(rec.alert_id)
+            if alert is None:
+                continue
+            out = [(a, label) for a, label in out if a.alert_id != rec.alert_id]  # the revert is the later word
+            out.append((alert, "malicious"))
+        return out
+
+    def recheck_agreement(self) -> dict[str, Any]:
+        """Drift signal: how often the facts-only verdict matched the analyst's final call on
+        real T1 escalations. A falling rate means the re-check needs retraining."""
+        agree = total = 0
+        for esc in self.escalations(None, limit=1_000_000):
+            if esc.canary or esc.tier != 1 or esc.status not in ("approved", "rejected") or not esc.recheck_verdict:
+                continue
+            total += 1
+            analyst_benign = esc.status == "approved"
+            agree += (esc.recheck_verdict == "benign") == analyst_benign
+        return {"resolved": total, "agreement_rate": round(agree / total, 4) if total else None}
+
     def rollout_report(self, *, min_samples: int = 50) -> dict[str, Any]:
         """Monitor-mode readiness per tool: what enforcing would have blocked, and why.
 
