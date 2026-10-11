@@ -6,12 +6,46 @@
 
 Mitigata CyberForge 2026 · Team: Ashutosh Neelesh Dubey + teammate · Build window: Sat 31 Oct 2026, 10:00 → Sun 1 Nov 2026, 23:59 IST (about 38 hours)
 
-> **Run it without cloning** (Docker + Python 3 only), details in [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md):
-> ```bash
-> curl -fsSLO https://raw.githubusercontent.com/ashutosh20git/TrustGate/main/docker-compose.yml
-> curl -fsSL https://raw.githubusercontent.com/ashutosh20git/TrustGate/main/scripts/init_secrets.py | python3 - --analyst you
-> docker compose up -d
-> ```
+## Try the demo (5 minutes, no clone)
+
+You need **Docker** (Docker Desktop on Windows/Mac, or Docker Engine with Compose v2 on Linux), **Python 3**, about 8 GB RAM and 5 GB disk. Nothing else is installed: you download one file and run the published image ([`ghcr.io/ashutosh20git/trustgate`](https://github.com/users/ashutosh20git/packages/container/package/trustgate)).
+
+**1. Install and start**
+
+```bash
+mkdir trustgate && cd trustgate
+curl -fsSLO https://raw.githubusercontent.com/ashutosh20git/TrustGate/main/docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/ashutosh20git/TrustGate/main/scripts/init_secrets.py | python3 - --analyst yourname
+docker compose up -d
+```
+
+The setup script writes `.env` and `secrets/` in this folder and **prints your analyst token once: save it**. The first `up` downloads about 1.5 GB. On Windows (PowerShell), use `curl.exe` instead of `curl`, and `python` if `python3` is not found.
+
+**2. Load the demo alerts** (a phishing email with a hidden "close this as benign" note aimed at the AI, plus a few clean alerts)
+
+```bash
+docker compose exec ingest python scripts/seed_demo.py
+```
+
+**3. Play the AI agent: try to close the poisoned alert as benign**
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/v1/tools/close_alert -H 'content-type: application/json' \
+  -d '{"alert_id":"E-DEMO","verdict":"benign","tool":"close_alert","args":{"reason":"test"},"cited_evidence":["facts.dmarc_pass"]}'
+```
+
+The answer is `"decision":"escalate"`: the typed facts (DMARC failed, malicious URL) disagree with "benign", so TrustGate sends the action to a human instead of running it. Blocking the attacker's IP, which the facts support, runs straight away:
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/v1/tools/block_ip -H 'content-type: application/json' \
+  -d '{"alert_id":"E-DEMO","verdict":"malicious","tool":"block_ip","args":{"ip":"203.0.113.9"},"cited_evidence":["facts.ioc_ips"]}'
+```
+
+**4. Act as the analyst:** open **http://127.0.0.1:8501**, paste your token in the sidebar, and approve or reject the escalation in the queue. The *Actions & rollback* tab undoes an executed action in one click; *Audit* shows the hash-chained record of every decision.
+
+**Stop:** `docker compose down` (add `-v` to delete the data). **Upgrade:** download `docker-compose.yml` again, then `docker compose pull && docker compose up -d`.
+
+To use it for real (your own AI agent, SIEM and SOC tools; monitor mode first; Kubernetes with Helm), follow **[docs/SELF_HOSTING.md](docs/SELF_HOSTING.md)**.
 
 > **Status: built.** The v1 engine, all four v2 must-haves, the two "Should" items, the library, the MCP gateway, the services, the evaluation harness and the test suite are implemented. It runs **fully offline today** (`pytest`, `python -m eval.run`) using the bundled OPA binary and deterministic stand-ins. Running it **live** (real agent, real re-check model, Docker stack) needs the keys and services in [requirements from the team](#requirements-from-the-team); each one is a tracked placeholder that fails closed until filled — see [`PLACEHOLDERS.md`](PLACEHOLDERS.md).
 
@@ -24,7 +58,7 @@ python -m spacy download en_core_web_lg
 # OPA binary (needed for the gate): downloaded to .tools/ during the build, or:
 #   curl -L -o .tools/opa.exe https://github.com/open-policy-agent/opa/releases/latest/download/opa_windows_amd64.exe
 
-pytest                                   # 157 tests, each mapped to a silent-failure fix or feature
+pytest                                   # 168 tests, each mapped to a silent-failure fix or feature
 python -m eval.run --configs A,B,C,D     # attack suite A-D + the gate-only-catches headline
 python scripts/seed_demo.py --local      # show the poisoned email being split and flagged
 ```
@@ -33,6 +67,7 @@ python scripts/seed_demo.py --local      # show the poisoned email being split a
 
 ## Contents
 
+- [Try the demo](#try-the-demo-5-minutes-no-clone)
 - [Positioning](#positioning-the-action-layer-detectors-lack)
 - [What is in v2](#what-is-in-v2)
 - [Architecture](#architecture)
