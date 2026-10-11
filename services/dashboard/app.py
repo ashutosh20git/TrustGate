@@ -28,9 +28,17 @@ def store() -> Store:
     return Store(settings=settings)
 
 
+token = st.sidebar.text_input("Your analyst token", type="password")
+headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+
 def proxy_get(path: str):
     try:
-        return httpx.get(f"{PROXY}{path}", timeout=10).json()
+        resp = httpx.get(f"{PROXY}{path}", headers=headers, timeout=10)
+        if resp.status_code in (401, 503):
+            st.warning(resp.json().get("detail", "analyst token required"))
+            return None
+        return resp.json()
     except httpx.HTTPError as exc:
         st.warning(f"proxy unreachable ({type(exc).__name__}); reading the DB directly")
         return None
@@ -50,9 +58,7 @@ tab_queue, tab_metrics, tab_audit, tab_pins = st.tabs(["Escalation queue", "Metr
 
 with tab_queue:
     st.subheader("Open escalations")
-    token = st.text_input("Your analyst token", type="password")
     second = st.text_input("Second analyst's token (required to approve T2/T3)", type="password")
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
     items = proxy_get("/v1/escalations?status=open") or []
     if not items:
         st.info("No open escalations.")

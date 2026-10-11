@@ -18,7 +18,7 @@ or runs **degraded** — never silently open — and has a tracking issue in `bd
 | 9 | Hackathon rules decision | — | Confirm pre-build is allowed with Mitigata | `tg-e5d` |
 | 10 | Optional (Lakera, SIEM, OCR) | Off by default; first in the cut order | Lakera key / Splunk HEC / Tesseract as needed | `tg-0gx` |
 | 11 | Sender history from the MTA / SIEM | **Every email T1 action escalates** (attacker-cost floor: no fact a fresh campaign cannot buy) | Post `observed.sender_prior_messages` (messages this exact sender delivered before) with each email alert, from mail-gateway logs or a SIEM lookup | — (needs a `bd` issue) |
-| 12 | Analyst tokens | **Every approval, rejection and MCP re-pin is refused** (503): no identity, no approval | `python scripts/init_secrets.py --analyst <name>` per analyst; hand each printed token to that analyst only, never to the agent | — (needs a `bd` issue) |
+| 12 | Analyst tokens | **Every approval, rejection and MCP re-pin is refused** (503), and the analyst views (queue, audit, metrics, pins) are closed: no identity, no access | `python scripts/init_secrets.py --analyst <name>` per analyst; hand each printed token to that analyst only, never to the agent | — (needs a `bd` issue) |
 
 ## How "fails closed" is wired
 

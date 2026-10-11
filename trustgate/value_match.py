@@ -3,6 +3,12 @@
 The gate cannot see how the model turned untrusted text into an argument, so
 high-impact arguments must exactly equal values from the typed facts (T2), or
 be on the pack allowlist with no raw evidence in the body (T3).
+
+Outbound text is checked in its decoded form (outbound_view): zero-width
+characters, homoglyphs, base64 and URL encoding are undone first, so an agent
+cannot carry evidence or a secret out by encoding it. Matching ignores
+everything but letters and digits, so inserted punctuation or spacing does not
+hide a quote either.
 """
 
 from __future__ import annotations
@@ -11,11 +17,12 @@ import ipaddress
 import re
 from typing import Any
 
+from trustgate.ingest.decode import sanitise
 from trustgate.models import Alert, Trust, TypedFacts
 from trustgate.policy_client import PolicyPack
 
 RAW_EVIDENCE_WINDOW = 40
-_WS = re.compile(r"\s+")
+_NON_ALNUM = re.compile(r"[\W_]+")
 
 
 def _norm_value(value: Any) -> str:
@@ -62,25 +69,27 @@ def outbound_fields(pack: PolicyPack, tool: str, args: dict[str, Any], extra: li
     return {name: str(args[name]) for name in names if name in args and args[name] is not None}
 
 
+def outbound_view(text: str) -> str:
+    """Outbound text as a reader could recover it: normalised, plus hidden and decoded parts."""
+    return sanitise(str(text), max_chars=len(str(text)) + 1).scan_text
+
+
 def _norm_text(text: str) -> str:
-    return _WS.sub(" ", text).strip().lower()
+    return _NON_ALNUM.sub("", text).lower()
 
 
 def raw_evidence_in(text: str, alert: Alert, window: int = RAW_EVIDENCE_WINDOW) -> list[str]:
-    """IDs of untrusted evidence items quoted verbatim (>= window chars) in text."""
-    haystack = _norm_text(text)
+    """IDs of untrusted evidence items quoted (>= window letters and digits) anywhere in text,
+    including inside encoded or obfuscated parts."""
+    haystack = _norm_text(outbound_view(text))
     if len(haystack) < window:
         return []
+    shingles = {haystack[i : i + window] for i in range(len(haystack) - window + 1)}
     hits: list[str] = []
     for ev in alert.evidence:
         if ev.trust != Trust.UNTRUSTED:
             continue
         content = _norm_text(ev.content)
-        if len(content) < window:
-            continue
-        step = max(1, window // 2)
-        for i in range(0, len(content) - window + 1, step):
-            if content[i : i + window] in haystack:
-                hits.append(ev.id)
-                break
+        if any(content[i : i + window] in shingles for i in range(len(content) - window + 1)):
+            hits.append(ev.id)
     return hits

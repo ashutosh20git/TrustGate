@@ -36,8 +36,9 @@ from pydantic import ValidationError
 from trustgate import value_match
 from trustgate.config import NotConfigured, Settings
 from trustgate.evidence_floor import t1_evidence
+from trustgate.ingest.decode import SCAN_TEXT_LIMIT
 from trustgate.models import Alert, GateDecision, ProposedAction, Trust, TypedFacts, Verdict
-from trustgate.output_scan import OutputScanner
+from trustgate.output_scan import OutputScanner, ScanResult
 from trustgate.policy_client import PolicyPack, load_pack, policy_client
 from trustgate.ratelimit import rate_limiter
 from trustgate.recheck import RecheckResult, as_recheck, facts_only_recheck
@@ -475,14 +476,19 @@ class Gate:
         recipient = value_match.recipient_of(self.pack, action.tool, action.args,
                                              registered.target_arg if registered else None)
         fields = value_match.outbound_fields(self.pack, action.tool, action.args)
+        if any(len(text) > SCAN_TEXT_LIMIT for text in fields.values()):
+            raise _Escalate([f"outbound payload over {SCAN_TEXT_LIMIT} characters cannot be fully scanned"])
         raw_ids = sorted({eid for text in fields.values() for eid in value_match.raw_evidence_in(text, alert)})
-        scan = self.output_scanner.scan(fields)  # raises if no backend: T3 fails closed
+        scan, hidden = self._outbound_scan(fields)  # raises if no backend: T3 fails closed
         decision.output_findings = scan.findings
-        policy_input.update(recipient=recipient, contains_raw_evidence=bool(raw_ids), output_entities=scan.entities)
+        policy_input.update(recipient=recipient, contains_raw_evidence=bool(raw_ids),
+                            output_entities=sorted(set(scan.entities) | set(hidden)))
         if raw_ids:
             raise _Escalate(["raw evidence in outbound payload"], raw_ids)
         if scan.blocked_entities:
             raise _Escalate([f"sensitive data in outbound payload: {', '.join(scan.blocked_entities)}"])
+        if hidden:
+            raise _Escalate([f"sensitive data hidden by encoding in outbound payload: {', '.join(hidden)}"])
         if any(f.action == "redact" for f in scan.findings):
             decision.redacted_args = {**action.args, **scan.redacted}
             decision.reasons.append("outbound payload redacted: " + ", ".join(
@@ -500,6 +506,20 @@ class Gate:
         ok = ttl is not None and math.isfinite(ttl) and 0 < ttl <= max_hours
         return {"required": True, "ok": ok, "ttl_hours": ttl if ok else None, "max_hours": max_hours,
                 "reason": f"T1: {action.tool} changes more than this alert; it needs {arg} in (0, {max_hours:g}] hours"}
+
+    def _outbound_scan(self, fields: dict[str, str]) -> tuple[ScanResult, list[str]]:
+        """Scan outbound text as written and as decoded. Returns (scan of the text as written,
+        non-allowed entities found only after decoding). Encoded data cannot be redacted in
+        place, so anything sensitive hidden that way escalates instead."""
+        scan = self.output_scanner.scan(fields)
+        decoded = {arg: value_match.outbound_view(text) for arg, text in fields.items()}
+        changed = {arg: text for arg, text in decoded.items() if text != fields[arg]}
+        if not changed:
+            return scan, []
+        seen = {(f.arg, f.entity) for f in scan.findings}
+        hidden = sorted({f.entity for f in self.output_scanner.scan(changed).findings
+                         if f.action != "allow" and (f.arg, f.entity) not in seen})
+        return scan, hidden
 
     @staticmethod
     def _citation_exists(citation: str, alert: Alert) -> bool:
@@ -624,12 +644,15 @@ class Gate:
         if esc.tier != int(Tier.OUTBOUND):
             return action.args
         fields = value_match.outbound_fields(self.pack, action.tool, action.args)
+        if any(len(text) > SCAN_TEXT_LIMIT for text in fields.values()):
+            raise ApprovalRefused("outbound payload is too large to scan")
         try:
-            scan = self.output_scanner.scan(fields)
+            scan, hidden = self._outbound_scan(fields)
         except NotConfigured as exc:
             raise ApprovalRefused(f"output scanner unavailable ({exc.what}); outbound approval fails closed") from None
-        if scan.blocked_entities:
-            raise ApprovalRefused(f"{', '.join(scan.blocked_entities)} may never leave, even with approval")
+        blocked = sorted(set(scan.blocked_entities) | {e for e in hidden if self.output_scanner.action_for(e) == "block"})
+        if blocked:
+            raise ApprovalRefused(f"{', '.join(blocked)} may never leave, even with approval")
         if any(f.action == "redact" for f in scan.findings):
             return {**action.args, **scan.redacted}
         return action.args

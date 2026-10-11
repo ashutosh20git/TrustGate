@@ -9,6 +9,7 @@ available, the scanner raises and T3 actions fail closed.
 
 from __future__ import annotations
 
+import re
 import threading
 from dataclasses import dataclass, field
 
@@ -40,6 +41,69 @@ SECRET_PATTERNS: dict[str, list[tuple[str, str, float]]] = {
         ("password_assignment", r"(?i)\b(?:password|passwd|pwd|secret|api[_-]?key|token)\s*[:=]\s*\S{6,}", 0.7),
     ],
 }
+
+
+# Floor-blocked identifiers Presidio recognises natively. The LLM Guard fallback
+# only says "sensitive", never which entity, so without these it could redact a
+# card number but never block it as the floor requires.
+FLOOR_PATTERNS: dict[str, list[tuple[str, str, float]]] = {
+    "CREDIT_CARD": [("card_number", r"\b(?:\d[ -]?){12,18}\d\b", 0.6)],
+    "US_SSN": [("us_ssn", r"\b\d{3}-\d{2}-\d{4}\b", 0.6)],
+    "IN_AADHAAR": [("aadhaar", r"\b[2-9]\d{3}[ -]?\d{4}[ -]?\d{4}\b", 0.6)],
+    "IN_PAN": [("pan", r"\b[A-Z]{5}\d{4}[A-Z]\b", 0.6)],
+    "IBAN_CODE": [("iban", r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b", 0.6)],
+    "CRYPTO": [("btc_address", r"\b(?:bc1[a-z0-9]{25,59}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})\b", 0.6)],
+}
+_DIGITS = re.compile(r"\D")
+
+
+def _luhn_ok(number: str) -> bool:
+    digits = [int(d) for d in _DIGITS.sub("", number)]
+    if not 13 <= len(digits) <= 19:
+        return False
+    total = 0
+    for i, d in enumerate(reversed(digits)):
+        if i % 2:
+            d *= 2
+            d -= 9 if d > 9 else 0
+        total += d
+    return total % 10 == 0
+
+
+_VERHOEFF_D = [
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [1, 2, 3, 4, 0, 6, 7, 8, 9, 5], [2, 3, 4, 0, 1, 7, 8, 9, 5, 6],
+    [3, 4, 0, 1, 2, 8, 9, 5, 6, 7], [4, 0, 1, 2, 3, 9, 5, 6, 7, 8], [5, 9, 8, 7, 6, 0, 4, 3, 2, 1],
+    [6, 5, 9, 8, 7, 1, 0, 4, 3, 2], [7, 6, 5, 9, 8, 2, 1, 0, 4, 3], [8, 7, 6, 5, 9, 3, 2, 1, 0, 4],
+    [9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
+]
+_VERHOEFF_P = [
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [1, 5, 7, 6, 2, 8, 3, 0, 9, 4], [5, 8, 0, 3, 7, 9, 6, 1, 4, 2],
+    [8, 9, 1, 6, 0, 4, 3, 5, 2, 7], [9, 4, 5, 3, 1, 2, 6, 8, 7, 0], [4, 2, 8, 6, 5, 7, 3, 9, 0, 1],
+    [2, 7, 9, 3, 8, 0, 6, 4, 1, 5], [7, 0, 4, 6, 9, 1, 3, 2, 5, 8],
+]
+
+
+def _verhoeff_ok(number: str) -> bool:
+    check = 0
+    for i, d in enumerate(reversed(_DIGITS.sub("", number))):
+        check = _VERHOEFF_D[check][_VERHOEFF_P[i % 8][int(d)]]
+    return check == 0
+
+
+_CHECKSUMS = {"CREDIT_CARD": _luhn_ok, "IN_AADHAAR": _verhoeff_ok}
+
+
+def regex_findings(text: str) -> list[tuple[str, int, int, float]]:
+    """(entity, start, end, score) for secrets and floor-blocked identifiers, by regex only."""
+    hits: list[tuple[str, int, int, float]] = []
+    for entity, patterns in {**SECRET_PATTERNS, **FLOOR_PATTERNS}.items():
+        for _name, regex, score in patterns:
+            for m in re.finditer(regex, text):
+                checksum = _CHECKSUMS.get(entity)
+                if checksum is not None and not checksum(m.group(0)):
+                    continue
+                hits.append((entity, m.start(), m.end(), score))
+    return hits
 
 
 @dataclass
@@ -155,6 +219,11 @@ class OutputScanner:
         for arg, text in fields.items():
             text = str(text)
             if isinstance(backend, LLMGuardBackend):
+                # LLM Guard redacts but does not name entities; a regex pass names the
+                # secrets and floor-blocked identifiers so they can still be blocked.
+                for entity, start, end, score in regex_findings(text):
+                    result.findings.append(OutputFinding(entity=entity, start=start, end=end, score=score,
+                                                         arg=arg, action=self.action_for(entity)))
                 sanitized, is_valid, risk = backend.analyze_and_redact(text)
                 if not is_valid:
                     result.findings.append(OutputFinding(entity="SENSITIVE", start=0, end=len(text), score=risk,
