@@ -34,16 +34,18 @@ agent never holds a tool credential.
   OTX, URLhaus) or DNS-based email authentication. Behind an egress proxy, set
   `HTTPS_PROXY` in `.env` (Compose) or `env:` (Helm).
 
-## Try it in five minutes
+## Try it in five minutes (no clone)
 
-You need Docker (with Compose v2) and any Python 3 for the setup script, which
-uses only the standard library. Nothing else is installed on the host.
+You need Docker (with Compose v2) and Python 3. Nothing is cloned or installed:
+you download one file, and the setup script runs straight from GitHub using only
+Python's standard library.
 
 ```bash
-git clone https://github.com/ashutosh20git/TrustGate.git && cd TrustGate
-python3 scripts/init_secrets.py --analyst alice     # prints alice's token once: keep it
-docker compose pull --ignore-pull-failures          # the published image (~1.5 GB download)
-docker compose up -d                                # builds locally (5-15 min) if the pull failed
+mkdir trustgate && cd trustgate
+curl -fsSLO https://raw.githubusercontent.com/ashutosh20git/TrustGate/main/docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/ashutosh20git/TrustGate/main/scripts/init_secrets.py \
+  | python3 - --analyst alice       # writes .env and secrets/ here; prints alice's token once: keep it
+docker compose up -d                # pulls the published image (~1.5 GB) and starts everything
 docker compose exec ingest python scripts/seed_demo.py   # load a poisoned phishing email + clean alerts
 
 # Play the agent: try to close the poisoned alert as benign. TrustGate escalates it.
@@ -53,6 +55,15 @@ curl -s -X POST http://127.0.0.1:8080/v1/tools/close_alert -H 'content-type: app
 
 Open http://127.0.0.1:8501, paste alice's token, and approve or reject the
 escalation. `docker compose down` stops everything; add `-v` to delete the data.
+To upgrade: download `docker-compose.yml` again, then `docker compose pull && docker compose up -d`.
+
+On Windows, run the same commands in PowerShell with `curl.exe` instead of `curl`,
+and `python` if `python3` is not on your PATH.
+
+**From a clone** (to change the code or build the image yourself): `git clone`
+the repo, run `python3 scripts/init_secrets.py --analyst alice`, then
+`docker compose up -d --build`. The `docker-compose.override.yml` in the repo adds
+the local build.
 
 ## Docker Compose
 
@@ -63,7 +74,7 @@ python3 scripts/init_secrets.py --analyst alice --analyst bob
 #   mock_soc_token, ingest_token (give it to your SIEM), analyst_tokens (hashes only).
 #   Each analyst's token is printed once: hand it to that analyst, never to the agent.
 $EDITOR .env          # TRUSTGATE_MTA_AUTHSERV_ID, threat-intel keys, TRUSTGATE_MODE
-docker compose pull --ignore-pull-failures && docker compose up -d   # or: up -d --build
+docker compose up -d      # pulls the published image; or: up -d --build
 docker compose ps     # proxy and ingest report (healthy)
 ```
 
@@ -172,7 +183,14 @@ service (Compose).
    (`scripts/train_recheck.py`). The image's starter model was trained on synthetic
    alerts. Or run Ollama and set `TRUSTGATE_RECHECK_BACKEND=ollama`.
 4. **Replace the example policy values** (critical assets, allowlists) in
-   `packs/soc.json` with yours.
+   `packs/soc.json` with yours. The proxy and OPA both read the packs from the
+   image, so ship yours in an image built on TrustGate's and set `TRUSTGATE_IMAGE`
+   (Compose) or `image:` (Helm; or `opa.packsConfigMap`, mounted into both):
+
+   ```dockerfile
+   FROM ghcr.io/ashutosh20git/trustgate:2.4
+   COPY packs /app/packs
+   ```
 5. **Watch the rollout report** (dashboard Metrics tab, `GET /v1/rollout`). When a
    tool shows enough decisions, no fail-closed errors and would-block reasons you
    agree with, switch to `enforce`.

@@ -6,7 +6,12 @@
 
 Mitigata CyberForge 2026 · Team: Ashutosh Neelesh Dubey + teammate · Build window: Sat 31 Oct 2026, 10:00 → Sun 1 Nov 2026, 23:59 IST (about 38 hours)
 
-> **Self-host it:** `python3 scripts/init_secrets.py --analyst you && docker compose pull --ignore-pull-failures && docker compose up -d`, then follow [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) ("Try it in five minutes").
+> **Run it without cloning** (Docker + Python 3 only), details in [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md):
+> ```bash
+> curl -fsSLO https://raw.githubusercontent.com/ashutosh20git/TrustGate/main/docker-compose.yml
+> curl -fsSL https://raw.githubusercontent.com/ashutosh20git/TrustGate/main/scripts/init_secrets.py | python3 - --analyst you
+> docker compose up -d
+> ```
 
 > **Status: built.** The v1 engine, all four v2 must-haves, the two "Should" items, the library, the MCP gateway, the services, the evaluation harness and the test suite are implemented. It runs **fully offline today** (`pytest`, `python -m eval.run`) using the bundled OPA binary and deterministic stand-ins. Running it **live** (real agent, real re-check model, Docker stack) needs the keys and services in [requirements from the team](#requirements-from-the-team); each one is a tracked placeholder that fails closed until filled — see [`PLACEHOLDERS.md`](PLACEHOLDERS.md).
 
@@ -406,8 +411,7 @@ setup, connecting your real SOC tools (`TRUSTGATE_SOC_CLIENT`), going live in mo
 ```bash
 python3 scripts/init_secrets.py --analyst alice  # standard library only; creates .env (random
                                                  # POSTGRES_PASSWORD) and secrets/; prints each analyst token once
-docker compose pull --ignore-pull-failures   # published image (ghcr.io/ashutosh20git/trustgate)
-docker compose up -d            # proxy, ingest, detector, OPA, Redis, Postgres, mock-soc, dashboard
+docker compose up -d            # pulls ghcr.io/ashutosh20git/trustgate; --build to build from this checkout
 #   dashboard:  http://127.0.0.1:8501   (paste your analyst token)
 #   proxy:      http://127.0.0.1:8080   (agent tool calls)
 #   ingest:     http://127.0.0.1:8081   (SIEM posts alerts with secrets/ingest_token.txt)
