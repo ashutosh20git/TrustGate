@@ -21,6 +21,13 @@ ZERO_WIDTH = re.compile("[​-‏⁠-⁤﻿­᠎͏]")
 BIDI_CONTROLS = re.compile("[‪-‮⁦-⁩]")
 B64_BLOB = re.compile(r"(?<![A-Za-z0-9+/=_-])[A-Za-z0-9+/_-]{24,}={0,2}(?![A-Za-z0-9+/=_-])")
 URL_ENCODED = re.compile(r"(?:%[0-9A-Fa-f]{2}){3,}")
+# Hex: "49676e6f7265...", "49 67 6e 6f ...", "49:67:6e..." and "\x49\x67\x6e..." forms.
+HEX_BLOB = re.compile(r"(?<![0-9A-Fa-f])(?:[0-9A-Fa-f]{2}[ :]?){12,}(?![0-9A-Fa-f])")
+HEX_ESCAPED = re.compile(r"(?:\\x[0-9A-Fa-f]{2}){8,}")
+_ROT13 = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+                       "NOPQRSTUVWXYZABCDEFGHIJKLMnopqrstuvwxyzabcdefghijklm")
+_COMMON_WORDS = frozenset("the and you all this that your with from for are not ignore previous instructions close "
+                          "alert send password please now".split())
 HTML_HINT = re.compile(r"<\s*(html|body|div|span|p|table|font|br|a|style)\b", re.I)
 
 HIDDEN_STYLE = re.compile(
@@ -174,7 +181,33 @@ def decode_blobs(text: str, depth: int = 2) -> list[str]:
         decoded = urllib.parse.unquote(match.group(0))
         if decoded != match.group(0) and _printable_ratio(decoded) > 0.9:
             found.append(decoded)
+    for match in [*HEX_BLOB.finditer(text), *HEX_ESCAPED.finditer(text)]:
+        digits = re.sub(r"[^0-9A-Fa-f]", "", match.group(0).replace("\\x", ""))
+        try:
+            candidate = bytes.fromhex(digits).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            continue  # hashes and binary decode to nothing readable
+        if len(candidate) >= 8 and _printable_ratio(candidate) > 0.9 and re.search(r"[A-Za-z]{3}", candidate):
+            found.append(candidate)
+    rot = rot13_if_readable(text)
+    if rot:
+        found.append(rot)
     return found
+
+
+def rot13(text: str) -> str:
+    return text.translate(_ROT13)
+
+
+def _common_words(text: str) -> int:
+    return sum(1 for w in re.findall(r"[a-z]+", text.lower()) if w in _COMMON_WORDS)
+
+
+def rot13_if_readable(text: str) -> str | None:
+    """The ROT13 reading of text, when it reads as English and the text as written does not."""
+    rot = rot13(text)
+    gained = _common_words(rot)
+    return rot if gained >= 3 and gained > 2 * _common_words(text) else None
 
 
 def sanitise(raw: str, *, max_chars: int = 4000, is_html: bool | None = None) -> Decoded:

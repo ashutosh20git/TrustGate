@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import email
 import email.policy
+import email.utils
 import re
 from dataclasses import dataclass, field
 
@@ -43,6 +44,7 @@ class ParsedEmail:
     spoofed_auth_headers: list[str] = field(default_factory=list)
     attachments: list[tuple[str, bytes]] = field(default_factory=list)
     urls: list[str] = field(default_factory=list)
+    reply_to_domain: str = ""
     auth: AuthFacts = field(default_factory=AuthFacts)
 
 
@@ -93,6 +95,8 @@ def parse_email(raw: bytes, *, trusted_authserv_id: str | None) -> ParsedEmail:
         parsed.from_address = (address or "").strip().lower()
         parsed.from_domain = parsed.from_address.rsplit("@", 1)[-1] if "@" in parsed.from_address else ""
     parsed.subject = mail.subject or ""
+    reply_to = email.utils.parseaddr(str(msg.get("Reply-To") or ""))[1].strip().lower()
+    parsed.reply_to_domain = reply_to.rsplit("@", 1)[-1] if "@" in reply_to else ""
     parsed.body_text = "\n".join(mail.text_plain or [])
     parsed.body_html = "\n".join(mail.text_html or [])
 

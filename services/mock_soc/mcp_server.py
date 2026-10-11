@@ -55,15 +55,15 @@ def downgrade_severity(alert_id: str, severity: str) -> dict:
 
 
 @server.tool()
-def whitelist_indicator(alert_id: str, indicator: str, reason: str) -> dict:
-    """Allowlist an indicator."""
-    return client().whitelist_indicator(alert_id, indicator, reason)
+def whitelist_indicator(alert_id: str, indicator: str, reason: str, ttl_hours: float) -> dict:
+    """Allowlist an indicator for ttl_hours (at most 24)."""
+    return client().whitelist_indicator(alert_id, indicator, reason, ttl_hours)
 
 
 @server.tool()
-def suppress_rule(alert_id: str, rule: str, reason: str) -> dict:
-    """Suppress a detection rule."""
-    return client().suppress_rule(alert_id, rule, reason)
+def suppress_rule(alert_id: str, rule: str, reason: str, ttl_hours: float) -> dict:
+    """Suppress a detection rule for ttl_hours (at most 24)."""
+    return client().suppress_rule(alert_id, rule, reason, ttl_hours)
 
 
 @server.tool()
@@ -94,6 +94,50 @@ def send_email(alert_id: str, to: str, subject: str, body: str) -> dict:
 def post_webhook(alert_id: str, url: str, payload: str) -> dict:
     """Post a message to a webhook."""
     return client().post_webhook(alert_id, url, payload)
+
+
+# Reverse actions. The TrustGate gateway never lists these to the agent and refuses
+# agent calls; it runs them for analyst reverts and automatic rollback.
+@server.tool()
+def reopen_alert(alert_id: str) -> dict:
+    """Reopen a closed alert (reverse of close_alert)."""
+    return client().reopen_alert(alert_id)
+
+
+@server.tool()
+def restore_severity(alert_id: str, severity: str) -> dict:
+    """Restore an alert's severity (reverse of downgrade_severity)."""
+    return client().restore_severity(alert_id, severity)
+
+
+@server.tool()
+def remove_whitelist(alert_id: str, indicator: str) -> dict:
+    """Remove an allowlist entry (reverse of whitelist_indicator)."""
+    return client().remove_whitelist(alert_id, indicator)
+
+
+@server.tool()
+def unsuppress_rule(alert_id: str, rule: str) -> dict:
+    """Re-enable a suppressed rule (reverse of suppress_rule)."""
+    return client().unsuppress_rule(alert_id, rule)
+
+
+@server.tool()
+def unblock_ip(alert_id: str, ip: str) -> dict:
+    """Unblock an IP (reverse of block_ip)."""
+    return client().unblock_ip(alert_id, ip)
+
+
+@server.tool()
+def release_host(alert_id: str, host: str) -> dict:
+    """Release an isolated host (reverse of isolate_host)."""
+    return client().release_host(alert_id, host)
+
+
+@server.tool()
+def enable_account(alert_id: str, account: str) -> dict:
+    """Re-enable a disabled account (reverse of disable_account)."""
+    return client().enable_account(alert_id, account)
 
 
 if __name__ == "__main__":

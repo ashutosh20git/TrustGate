@@ -17,7 +17,7 @@ python -m spacy download en_core_web_lg
 # OPA binary (needed for the gate): downloaded to .tools/ during the build, or:
 #   curl -L -o .tools/opa.exe https://github.com/open-policy-agent/opa/releases/latest/download/opa_windows_amd64.exe
 
-pytest                                   # 135 tests, each mapped to a silent-failure fix or feature
+pytest                                   # 157 tests, each mapped to a silent-failure fix or feature
 python -m eval.run --configs A,B,C,D     # attack suite A-D + the gate-only-catches headline
 python scripts/seed_demo.py --local      # show the poisoned email being split and flagged
 ```
@@ -215,6 +215,20 @@ Built on top of the gate. Tests: `tests/test_part2_features.py`, `packs/policy_t
 | **Compliance evidence** | Evidence packs from the hash-chained audit trail for CERT-In (6-hour reporting, 180-day logs), the DPDP Act 2023 (s.8(5), s.8(6)) and ISO/IEC 27001:2022 (A.5.24-5.28, A.8.15-8.16). Evidence for a review, not a compliance determination | `trustgate/compliance.py`, `GET /v1/compliance/{framework}`, `scripts/compliance_report.py` |
 | **Quishing and text in images** | QR codes in attached images and in PDF pages are decoded (OpenCV) into untrusted evidence, their links go to URL reputation, and `facts.attachment_has_qr` is set; image text is read with Tesseract OCR and scanned like any evidence | `trustgate/ingest/attachments.py` |
 
+## v2.4: the stated limits, closed or narrowed
+
+Tests: `tests/test_limits_v24.py`.
+
+| Limit | Now | Where |
+|---|---|---|
+| Hex, ROT13 and paraphrased leaks | Hex (plain, spaced, `\x` escapes) and ROT13 are decoded at ingest and on outbound text; secrets hidden in ROT13 are caught by pattern. Light paraphrase (most of an evidence item's distinctive words reappearing, in any order) escalates. **Still open:** a full rewrite in other words needs a semantic model | `trustgate/ingest/decode.py`, `value_match.restated_evidence_in` |
+| An MCP tool's changed response caught only after it ran | The response is still withheld and the tool disabled, and now the action that call performed is rolled back. **Still open:** the change is seen only after the call, by nature of a response | `trustgate/mcp/gateway.py` |
+| A campaign spread across sender domains | T1 actions are also counted per link domain, per attachment hash and per near-duplicate body (MinHash bands; bodies differing in names and amounts share a key). Shared providers are exempt. **Still open:** a campaign that varies sender, link, attachment and wording at once | `trustgate/ingest/campaign.py`, `Gate._campaign_keys` |
+| A compromised account with real history | A known sender behaving unusually (Reply-To on another domain, parsed from headers; first link, first attachment or new sending IP, from MTA/SIEM history) no longer counts as costly support. **Still open:** a hijacked mailbox that behaves exactly as usual | `evidence_floor.py`, `packs/floor.json` `costly_negated_by` |
+| Standalone gateway rollback | Reverse actions run on the upstream MCP server (never listed to or callable by the agent); the mock SOC MCP server exposes them | `Gateway._undo_executor`, `services/mock_soc/mcp_server.py` |
+
+Also fixed: the mock SOC MCP server's `whitelist_indicator` and `suppress_rule` lacked the `ttl_hours` argument the gate requires, so through the gateway they could never pass.
+
 ## Packaging
 
 One engine ships in three forms. The hackathon builds the first two and pitches the third.
@@ -374,7 +388,7 @@ TrustGate/
 ├── examples/email_assistant.py    # second agent protected in a few lines
 ├── eval/                          # payloads, inject, build_attachments, generate_alerts, configs, sim, metrics, run
 ├── scripts/                       # init_secrets, seed_demo, train_recheck, check_model_pins, ci_eval_guard
-├── tests/                         # 135 tests, each mapped to a silent-failure fix or feature
+├── tests/                         # 157 tests, each mapped to a silent-failure fix or feature
 ├── .tools/opa.exe                 # OPA binary (git-ignored)
 ├── DISCLOSURE.md · PLACEHOLDERS.md · README.md
 ```
@@ -503,7 +517,7 @@ Cut order when time runs short (first to go at the top):
 ## Honest limits
 
 - TrustGate does not "solve" prompt injection. It claims containment: injections may land, but they cannot cause damage through gated actions.
-- A compromised real account can pass every hard check (valid DMARC, clean reputation). That is a detection problem, not injection, and it is out of scope.
+- A compromised real account can pass every hard check (valid DMARC, clean reputation). The floor now catches one that behaves unusually (v2.4); one that behaves exactly as usual is a detection problem, not injection, and out of scope.
 - The facts-only verdict is less accurate than the full-context one, so expect more escalations. The escalation rate is always reported next to accuracy.
 - A tool-boundary gate cannot see how the model turned untrusted text into an innocent-looking argument; value-matching on T2 and T3 targets is the mitigation, stated as a limit.
 - Never quote a language count, latency or accuracy figure that has not been measured.

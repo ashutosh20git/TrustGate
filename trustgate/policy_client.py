@@ -94,6 +94,11 @@ class PolicyPack:
         return {str(v).lower() for v in self.data.get("campaign_rate_limits", {}).get("shared_domains", [])}
 
     @property
+    def shared_url_domains(self) -> set[str]:
+        """Link hosts many unrelated senders use; campaigns there are linked by body and attachment instead."""
+        return {str(v).lower() for v in self.data.get("campaign_rate_limits", {}).get("shared_url_domains", [])}
+
+    @property
     def detector_sender_allowlist(self) -> set[str]:
         return {str(v).lower() for v in self.data.get("detector", {}).get("sender_allowlist", [])}
 

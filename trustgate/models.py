@@ -25,6 +25,7 @@ _HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _HOSTNAME = re.compile(r"^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,62})(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,62}))*$")
 _ACCOUNT = re.compile(r"^[A-Za-z0-9._@\\-]{1,64}$")
 _EVIDENCE_ID = re.compile(r"^ev-\d{1,5}$")
+_BAND = re.compile(r"^b\d:[0-9a-f]{16}$")
 _TOOL_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_.:/-]{0,127}$")
 
 
@@ -67,6 +68,33 @@ class TypedFacts(BaseModel):
     # True when a threat-intel lookup errored (not merely unconfigured): the
     # facts it would have produced are missing, not clean.
     enrichment_failed: bool = False
+    # Campaign keys (trustgate/ingest/campaign.py): link domains and near-duplicate body keys.
+    url_domains: list[str] = Field(default_factory=list, max_length=MAX_FACT_LIST)
+    content_bands: list[str] = Field(default_factory=list, max_length=16)
+    # A known sender behaving unusually: how a compromised account looks. From the email
+    # headers (reply_to_mismatch) and MTA/SIEM history (the sender_* facts). Each can only
+    # raise suspicion; any one set cancels sender history as support for "benign".
+    reply_to_mismatch: bool | None = None
+    sender_first_link: bool | None = None
+    sender_first_attachment: bool | None = None
+    sender_new_sending_ip: bool | None = None
+
+    @field_validator("url_domains")
+    @classmethod
+    def _url_domains_are_hostnames(cls, v: list[str]) -> list[str]:
+        out = [d.strip().lower() for d in v]
+        for d in out:
+            if not _HOSTNAME.match(d):
+                raise ValueError(f"invalid url domain in typed facts: {d[:40]!r}")
+        return out
+
+    @field_validator("content_bands")
+    @classmethod
+    def _bands_shape(cls, v: list[str]) -> list[str]:
+        for b in v:
+            if not _BAND.match(b):
+                raise ValueError("content_bands must look like 'b0:<16 hex>'")
+        return v
 
     @field_validator("sender_domain")
     @classmethod
@@ -125,6 +153,10 @@ class TypedFacts(BaseModel):
             "attachment_has_qr": self.attachment_has_qr,
             "sender_prior_messages": self.sender_prior_messages,
             "enrichment_failed": self.enrichment_failed,
+            "reply_to_mismatch": self.reply_to_mismatch,
+            "sender_first_link": self.sender_first_link,
+            "sender_first_attachment": self.sender_first_attachment,
+            "sender_new_sending_ip": self.sender_new_sending_ip,
         }
 
     def target_values(self, fact: str) -> set[str]:

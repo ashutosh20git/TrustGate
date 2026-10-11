@@ -19,7 +19,7 @@ or runs **degraded** — never silently open — and has a tracking issue in `bd
 | 10 | Optional (Lakera, SIEM) | Off by default; first in the cut order | Lakera key / Splunk HEC as needed | `tg-0gx` |
 | 13 | Tesseract OCR binary | Image text is not read; attachments are flagged `ocr_unavailable` (QR decoding still works) | Install `tesseract-ocr` on the ingest host | — |
 | 14 | Provenance key (optional) | Provenance stamps are unsigned: they still raise suspicion, but receivers cannot check them | Set the same `TRUSTGATE_PROVENANCE_KEY` (or Docker secret `provenance_key`) on every gate that hands off to another | — |
-| 11 | Sender history from the MTA / SIEM | **Every email T1 action escalates** (attacker-cost floor: no fact a fresh campaign cannot buy) | Post `observed.sender_prior_messages` (messages this exact sender delivered before) with each email alert, from mail-gateway logs or a SIEM lookup | — (needs a `bd` issue) |
+| 11 | Sender history from the MTA / SIEM | **Every email T1 action escalates** (attacker-cost floor: no fact a fresh campaign cannot buy) | Post `observed.sender_prior_messages` (messages this exact sender delivered before) with each email alert, from mail-gateway logs or a SIEM lookup. Also post `sender_first_link`, `sender_first_attachment` and `sender_new_sending_ip` when the history can tell (they catch a compromised account) | — (needs a `bd` issue) |
 | 12 | Analyst tokens | **Every approval, rejection and MCP re-pin is refused** (503), and the analyst views (queue, audit, metrics, pins) are closed: no identity, no access | `python scripts/init_secrets.py --analyst <name>` per analyst; hand each printed token to that analyst only, never to the agent | — (needs a `bd` issue) |
 
 ## How "fails closed" is wired
