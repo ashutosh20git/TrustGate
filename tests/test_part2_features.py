@@ -390,3 +390,21 @@ def test_part2_endpoints_need_a_token(soc, settings, store):
     reverted = proxy.post(f"/v1/actions/{action_id}/revert", json={"reason": "x"}, headers=auth).json()
     assert reverted["status"] == "reverted" and reverted["reverted_by"] == "ana"
     assert proxy.get("/v1/compliance/sox", headers=auth).status_code == 404
+
+
+def test_real_escalation_never_merges_into_a_canary(store):
+    # A canary copies a real close_alert verbatim, so it shares that action's dedupe key.
+    # If the agent retries the same action later, it must open a real escalation; merging
+    # into the canary would drop the action and score the analyst on a planted item.
+    action = ProposedAction(alert_id="E-1", verdict="benign", tool="close_alert", args={"reason": "x"})
+    decision = GateDecision(decision="escalate", tier=1, reasons=["x"])
+    real = store.open_escalation(action, decision)
+    canary = store.open_escalation(action, decision, canary=True)
+    with store.session() as s:
+        row = s.get(Escalation, real.id)
+        row.status = "approved"
+        s.add(row)
+        s.commit()
+    retry = store.open_escalation(action, decision)
+    assert retry.id not in (real.id, canary.id)
+    assert retry.canary is False

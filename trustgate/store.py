@@ -338,8 +338,10 @@ class Store:
         key = hashlib.sha256(json.dumps([action.alert_id, action.tool, action.args], sort_keys=True,
                                         default=str).encode()).hexdigest()[:24]
         with self.session() as s:
+            # Never dedupe into a canary: it copies a real action, so it shares that key.
             existing = s.exec(select(Escalation).where(Escalation.dedupe_key == key,
-                                                       Escalation.status == "open")).first()
+                                                       Escalation.status == "open",
+                                                       Escalation.canary == False)).first()  # noqa: E712
             if existing and not canary:
                 existing.duplicates += 1  # deduplicated (silent failure 22)
                 s.add(existing)
