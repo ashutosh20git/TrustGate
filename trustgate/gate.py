@@ -67,6 +67,10 @@ class ApprovalRefused(Exception):
     """An analyst approval the gate will not execute (expired, changed since escalation, one approver)."""
 
 
+class ApprovalExecutionFailed(Exception):
+    """An approved action whose executor raised. The escalation is closed as failed, never left open."""
+
+
 @dataclass
 class RegisteredTool:
     name: str
@@ -378,7 +382,8 @@ class Gate:
                                 self._tainted(action, alert))
             if not any(c.startswith("facts.") for c in action.cited_evidence):
                 raise _Escalate(["no typed-fact citation"], self._tainted(action, alert))
-            evidence = t1_evidence(alert.facts, alert.source, self.pack.floor.get("t1_evidence"))
+            evidence = t1_evidence(alert.facts, alert.source, self.pack.floor.get("t1_evidence"),
+                                   action.cited_evidence)
             policy_input["t1_evidence"] = evidence.policy_input()
             if evidence.reasons():
                 raise _Escalate(evidence.reasons(), self._tainted(action, alert))
@@ -565,7 +570,20 @@ class Gate:
                                  details={"escalation_id": escalation_id, "approved": False, "refused": str(refused),
                                           "analyst": analyst, "second_analyst": second_analyst})
                 raise
-            result = self._invoke(tool, action.alert_id, args)
+            try:
+                result = self._invoke(tool, action.alert_id, args)
+            except Exception as exc:
+                # The tool may have partly run, so the escalation is not left open
+                # for a silent retry: it is closed as failed and audited, and the
+                # agent must propose the action again.
+                error = type(exc).__name__
+                self.store.close_escalation(escalation_id, status="failed", analyst=analyst, reason=reason,
+                                            result={"error": error})
+                self.store.audit("execution_failed", alert_id=esc.alert_id, tool=esc.tool,
+                                 details={"escalation_id": escalation_id, "error": error, "analyst": analyst,
+                                          "second_analyst": second_analyst})
+                raise ApprovalExecutionFailed(f"approved action failed to execute ({error}); "
+                                              "escalation closed as failed") from None
         self.store.close_escalation(escalation_id, status="approved" if approve else "rejected", analyst=analyst,
                                     reason=reason, result={"result": result} if approve else None)
         self.store.audit("analyst", alert_id=esc.alert_id, tool=esc.tool,

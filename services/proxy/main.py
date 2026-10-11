@@ -4,6 +4,12 @@
 
 Endpoints follow the blueprint (page 8) plus v2 additions for MCP pins.
 Tool credentials live only here (MOCK_SOC_TOKEN, a Docker secret).
+
+Approving or rejecting an escalation and re-pinning an MCP tool need an analyst
+bearer token (Authorization: Bearer ...); T2/T3 approvals also need a second
+analyst's token (X-Second-Analyst-Token). Identities come from the tokens, never
+from the request body, so the agent, which shares agent-net with the proxy and
+holds no analyst token, cannot approve its own escalations.
 """
 
 from __future__ import annotations
@@ -13,14 +19,15 @@ import random
 from collections import Counter
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from services.mock_soc.client import MockSOCClient
 from services.soc_tools import register_soc_tools, soc_tool_functions
+from trustgate.analysts import AnalystDirectory
 from trustgate.config import NotConfigured, Settings
-from trustgate.gate import ESCALATED_MESSAGE, ApprovalRefused, Gate, ToolConfigError
+from trustgate.gate import ESCALATED_MESSAGE, ApprovalExecutionFailed, ApprovalRefused, Gate, ToolConfigError
 from trustgate.ingest.enrich import ThreatIntel
 from trustgate.mcp.pinning import ToolPinRegistry
 from trustgate.models import GateDecision, ProposedAction
@@ -30,13 +37,10 @@ CANARY_RATE = 0.1  # share of the queue that is planted known-bad items (silent 
 
 
 class AnalystDecision(BaseModel):
-    analyst: str
     reason: str
-    second_analyst: str | None = None  # required to approve T2/T3 actions
 
 
 class RepinRequest(BaseModel):
-    approver: str
     reason: str
 
 
@@ -62,8 +66,10 @@ def _ensure_canaries(store: Store, gate: Gate, rng: random.Random) -> None:
     store.open_escalation(action.model_copy(update={"tool": "close_alert", "verdict": "benign"}), decision, canary=True)
 
 
-def create_app(gate: Gate | None = None, settings: Settings | None = None) -> FastAPI:
+def create_app(gate: Gate | None = None, settings: Settings | None = None,
+               analysts: AnalystDirectory | None = None) -> FastAPI:
     settings = settings or Settings()
+    analysts = analysts if analysts is not None else AnalystDirectory.parse(settings.analyst_tokens)
     store = gate.store if gate is not None else Store(settings=settings)
     if gate is None:
         gate = Gate(settings.policy, settings=settings, store=store)
@@ -77,6 +83,15 @@ def create_app(gate: Gate | None = None, settings: Settings | None = None) -> Fa
     rng = random.Random()
     app = FastAPI(title="TrustGate proxy", version="2.0.0")
     app.state.gate = gate
+
+    def analyst_from(authorization: str | None) -> str:
+        if not analysts.configured:
+            raise HTTPException(503, "analyst authentication not configured; run scripts/init_secrets.py")
+        scheme, _, token = (authorization or "").partition(" ")
+        name = analysts.identify(token) if scheme == "Bearer" else None
+        if name is None:
+            raise HTTPException(401, "a valid analyst token is required")
+        return name
 
     @app.post("/v1/tools/{tool}")
     async def call_tool(tool: str, action: ProposedAction) -> dict[str, Any]:
@@ -109,16 +124,26 @@ def create_app(gate: Gate | None = None, settings: Settings | None = None) -> Fa
         return [_public(e) for e in items]
 
     @app.post("/v1/escalations/{esc_id}/{verdict}")
-    def resolve(esc_id: str, verdict: str, body: AnalystDecision) -> dict[str, Any]:
+    def resolve(esc_id: str, verdict: str, body: AnalystDecision,
+                authorization: str | None = Header(default=None),
+                x_second_analyst_token: str | None = Header(default=None)) -> dict[str, Any]:
         if verdict not in ("approve", "reject"):
             raise HTTPException(404)
+        analyst = analyst_from(authorization)
+        second = None
+        if x_second_analyst_token:
+            second = analysts.identify(x_second_analyst_token.strip())
+            if second is None:
+                raise HTTPException(401, "the second analyst token is not valid")
         try:
-            return gate.resolve_escalation(esc_id, approve=verdict == "approve", analyst=body.analyst,
-                                           reason=body.reason, second_analyst=body.second_analyst)
+            return gate.resolve_escalation(esc_id, approve=verdict == "approve", analyst=analyst,
+                                           reason=body.reason, second_analyst=second)
         except KeyError:
             raise HTTPException(404, "no open escalation with that id") from None
         except ApprovalRefused as exc:
             raise HTTPException(409, f"approval refused: {exc}") from None
+        except ApprovalExecutionFailed as exc:
+            raise HTTPException(502, str(exc)) from None
         except (ToolConfigError, NotConfigured) as exc:
             raise HTTPException(503, f"executor unavailable: {type(exc).__name__}") from None
 
@@ -173,9 +198,11 @@ def create_app(gate: Gate | None = None, settings: Settings | None = None) -> Fa
         return [p.model_dump(mode="json") for p in store.pins()]
 
     @app.post("/v1/mcp/pins/{server}/{tool}/approve")
-    def repin(server: str, tool: str, body: RepinRequest) -> dict[str, Any]:
+    def repin(server: str, tool: str, body: RepinRequest,
+              authorization: str | None = Header(default=None)) -> dict[str, Any]:
+        approver = analyst_from(authorization)
         try:
-            return pins.approve(server, tool, approver=body.approver, reason=body.reason).model_dump(mode="json")
+            return pins.approve(server, tool, approver=approver, reason=body.reason).model_dump(mode="json")
         except KeyError:
             raise HTTPException(404) from None
 

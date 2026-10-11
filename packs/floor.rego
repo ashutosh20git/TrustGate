@@ -49,6 +49,11 @@ deny contains "T1: no fact the attacker cannot cheaply control supports benign" 
 	not input.t1_evidence.costly_ok == true
 }
 
+deny contains "T1: no cited typed fact supports benign" if {
+	input.tier == 1
+	not input.t1_evidence.cited_support_ok == true
+}
+
 # T1 changes that outlive the alert (suppressions, allowlist entries) must
 # carry a bounded expiry; one alert's facts cannot justify a permanent change.
 deny contains "T1: persistent change needs a bounded expiry" if {
