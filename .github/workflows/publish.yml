@@ -1,0 +1,68 @@
+name: Publish image
+
+# Builds docker/Dockerfile and pushes it to GitHub Container Registry, so
+# self-hosters can `docker compose pull` instead of building it themselves.
+#   main      -> ghcr.io/<owner>/trustgate:latest and :sha-<short>
+#   tag v2.5.0 -> ghcr.io/<owner>/trustgate:2.5 and :2.5.0
+# GitHub creates new packages as private: set the package to Public once in
+# its settings (Packages -> trustgate -> Package settings -> Change visibility).
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # GHCR names must be lower case.
+          images: ghcr.io/${{ github.repository_owner }}/trustgate
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}}
+          labels: |
+            org.opencontainers.image.title=TrustGate
+            org.opencontainers.image.description=Deterministic action gate for AI SOC agents
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          load: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test the published image
+        run: |
+          image="ghcr.io/$(echo '${{ github.repository_owner }}' | tr A-Z a-z)/trustgate:sha-$(git rev-parse --short=7 HEAD)"
+          docker pull "$image"
+          docker run --rm "$image" python -c "import trustgate, services.proxy.main, services.ingest.main; print('imports ok')"
+          docker run --rm "$image" test -f models/recheck_xgb.json
+          test "$(docker run --rm "$image" id -u)" = 10001

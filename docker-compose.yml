@@ -1,8 +1,8 @@
 # TrustGate v2 stack (blueprint page 7), ready to self-host. See docs/SELF_HOSTING.md.
 #
-#   python scripts/init_secrets.py --analyst alice --analyst bob
-#   cp .env.example .env            # set POSTGRES_PASSWORD and the keys you have
-#   docker compose up -d --build
+#   python3 scripts/init_secrets.py --analyst alice --analyst bob   # also creates .env
+#   docker compose pull --ignore-pull-failures   # published image, if reachable
+#   docker compose up -d                         # builds locally if it was not pulled
 #
 # Networks keep the agent away from tool credentials and data:
 #   agent-net    the agent reaches only the proxy (and the LLM API)
@@ -15,7 +15,7 @@
 name: trustgate
 
 x-service: &service
-  image: ${TRUSTGATE_IMAGE:-trustgate:2.4}
+  image: ${TRUSTGATE_IMAGE:-ghcr.io/ashutosh20git/trustgate:latest}
   build:
     context: .
     dockerfile: docker/Dockerfile

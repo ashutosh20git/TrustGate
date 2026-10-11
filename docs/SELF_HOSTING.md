@@ -42,7 +42,8 @@ uses only the standard library. Nothing else is installed on the host.
 ```bash
 git clone https://github.com/ashutosh20git/TrustGate.git && cd TrustGate
 python3 scripts/init_secrets.py --analyst alice     # prints alice's token once: keep it
-docker compose up -d --build                        # first build takes 5-15 min (image ~4.5 GB on disk)
+docker compose pull --ignore-pull-failures          # the published image (~1.5 GB download)
+docker compose up -d                                # builds locally (5-15 min) if the pull failed
 docker compose exec ingest python scripts/seed_demo.py   # load a poisoned phishing email + clean alerts
 
 # Play the agent: try to close the poisoned alert as benign. TrustGate escalates it.
@@ -62,7 +63,7 @@ python3 scripts/init_secrets.py --analyst alice --analyst bob
 #   mock_soc_token, ingest_token (give it to your SIEM), analyst_tokens (hashes only).
 #   Each analyst's token is printed once: hand it to that analyst, never to the agent.
 $EDITOR .env          # TRUSTGATE_MTA_AUTHSERV_ID, threat-intel keys, TRUSTGATE_MODE
-docker compose up -d --build
+docker compose pull --ignore-pull-failures && docker compose up -d   # or: up -d --build
 docker compose ps     # proxy and ingest report (healthy)
 ```
 
@@ -80,7 +81,9 @@ the re-check model in a container.
 
 ## Helm
 
-1. **Build and push the image** (the chart does not pull from a public registry):
+1. **Pick the image.** The chart defaults to the published
+   `ghcr.io/ashutosh20git/trustgate:2.4`. Air-gapped, or with your own connectors,
+   build and push your own:
 
    ```bash
    docker build -f docker/Dockerfile -t registry.corp.example/trustgate:2.4 .
@@ -180,8 +183,8 @@ service (Compose).
 - **Backups:** Postgres holds alerts, escalations, the action ledger and the
   hash-chained audit trail. Back it up like any security log; `GET /v1/metrics`
   reports `audit_chain_ok`.
-- **Upgrades:** build the new image, then `docker compose up -d --build` or
-  `helm upgrade`. Pods roll automatically when config or secrets change.
+- **Upgrades:** `git pull && docker compose pull && docker compose up -d`, or
+  `helm upgrade` with the new image tag. Pods roll automatically when config or secrets change.
 - **Rotating tokens:** delete an analyst's line in `secrets/analyst_tokens.txt`,
   re-run `init_secrets.py --analyst <name>`, and redeploy (Compose:
   `docker compose up -d`; Helm: update the secret).
