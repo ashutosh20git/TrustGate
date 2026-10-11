@@ -10,6 +10,11 @@ bearer token (Authorization: Bearer ...); T2/T3 approvals also need a second
 analyst's token (X-Second-Analyst-Token). Identities come from the tokens, never
 from the request body, so the agent, which shares agent-net with the proxy and
 holds no analyst token, cannot approve its own escalations.
+
+Tool callers (the agent) learn only whether an action ran: never the gate's
+reasons, the re-check verdict or the tainted spans, which would tell anything on
+agent-net which check to get around. The analyst views (escalations, audit,
+alerts, metrics, rollout, pins) need an analyst token too.
 """
 
 from __future__ import annotations
@@ -19,7 +24,7 @@ import random
 from collections import Counter
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -93,6 +98,9 @@ def create_app(gate: Gate | None = None, settings: Settings | None = None,
             raise HTTPException(401, "a valid analyst token is required")
         return name
 
+    def require_analyst(authorization: str | None = Header(default=None)) -> str:
+        return analyst_from(authorization)
+
     @app.post("/v1/tools/{tool}")
     async def call_tool(tool: str, action: ProposedAction) -> dict[str, Any]:
         action = action.model_copy(update={"tool": tool})
@@ -108,14 +116,16 @@ def create_app(gate: Gate | None = None, settings: Settings | None = None,
                 error = f"tool error: {type(exc).__name__}"
                 store.audit("execution_failed", alert_id=action.alert_id, tool=tool, details={"error": error})
         return {
-            "decision": decision.model_dump(mode="json"),
+            # Outcome only. Reasons stay in the audit trail and the analyst queue.
+            "decision": {"decision": decision.decision, "tier": decision.tier, "mode": decision.mode,
+                         "escalation_id": decision.escalation_id},
             "executed": executed,
             "result": result,
             "error": error,
             "message": None if executed else (ESCALATED_MESSAGE if not decision.permits_execution else error),
         }
 
-    @app.get("/v1/escalations")
+    @app.get("/v1/escalations", dependencies=[Depends(require_analyst)])
     def escalations(status: str = "open") -> list[dict[str, Any]]:
         if status == "open":
             _ensure_canaries(store, gate, rng)
@@ -147,18 +157,18 @@ def create_app(gate: Gate | None = None, settings: Settings | None = None,
         except (ToolConfigError, NotConfigured) as exc:
             raise HTTPException(503, f"executor unavailable: {type(exc).__name__}") from None
 
-    @app.get("/v1/audit")
+    @app.get("/v1/audit", dependencies=[Depends(require_analyst)])
     def audit(alert_id: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
         return [r.model_dump(mode="json") for r in store.audit_trail(alert_id, limit=limit)]
 
-    @app.get("/v1/alerts/{alert_id}")
+    @app.get("/v1/alerts/{alert_id}", dependencies=[Depends(require_analyst)])
     def get_alert(alert_id: str) -> dict[str, Any]:
         alert = store.get_alert(alert_id)
         if alert is None:
             raise HTTPException(404)
         return alert.model_dump(mode="json")
 
-    @app.get("/v1/metrics")
+    @app.get("/v1/metrics", dependencies=[Depends(require_analyst)])
     def metrics() -> dict[str, Any]:
         records = store.audit_trail(limit=1_000_000)
         decisions = [r for r in records if r.kind == "decision"]
@@ -188,12 +198,12 @@ def create_app(gate: Gate | None = None, settings: Settings | None = None,
             "pack": gate.pack.name,
         }
 
-    @app.get("/v1/rollout")
+    @app.get("/v1/rollout", dependencies=[Depends(require_analyst)])
     def rollout(min_samples: int = 50) -> dict[str, Any]:
         """Monitor-mode readiness: what enforcing would have blocked, per tool."""
         return store.rollout_report(min_samples=min_samples)
 
-    @app.get("/v1/mcp/pins")
+    @app.get("/v1/mcp/pins", dependencies=[Depends(require_analyst)])
     def list_pins() -> list[dict[str, Any]]:
         return [p.model_dump(mode="json") for p in store.pins()]
 
