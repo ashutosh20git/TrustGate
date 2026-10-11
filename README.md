@@ -12,7 +12,7 @@ Mitigata CyberForge 2026 · Team: Ashutosh Neelesh Dubey + teammate · Build win
 
 ```bash
 python -m venv .venv && . .venv/Scripts/activate     # Windows; use bin/activate on POSIX
-pip install -e ".[ingest,attachments,output-scan,recheck-xgb,mcp,server,eval,dev]"
+pip install -e ".[ingest,attachments,output-scan,recheck-xgb,mcp,server,agent,dashboard,eval,dev]"
 python -m spacy download en_core_web_lg
 # OPA binary (needed for the gate): downloaded to .tools/ during the build, or:
 #   curl -L -o .tools/opa.exe https://github.com/open-policy-agent/opa/releases/latest/download/opa_windows_amd64.exe
