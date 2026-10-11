@@ -34,11 +34,30 @@ agent never holds a tool credential.
   OTX, URLhaus) or DNS-based email authentication. Behind an egress proxy, set
   `HTTPS_PROXY` in `.env` (Compose) or `env:` (Helm).
 
+## Try it in five minutes
+
+You need Docker (with Compose v2) and any Python 3 for the setup script, which
+uses only the standard library. Nothing else is installed on the host.
+
+```bash
+git clone https://github.com/ashutosh20git/TrustGate.git && cd TrustGate
+python3 scripts/init_secrets.py --analyst alice     # prints alice's token once: keep it
+docker compose up -d --build                        # first build takes 5-15 min (image ~4.5 GB on disk)
+docker compose exec ingest python scripts/seed_demo.py   # load a poisoned phishing email + clean alerts
+
+# Play the agent: try to close the poisoned alert as benign. TrustGate escalates it.
+curl -s -X POST http://127.0.0.1:8080/v1/tools/close_alert -H 'content-type: application/json' \
+  -d '{"alert_id":"E-DEMO","verdict":"benign","tool":"close_alert","args":{"reason":"test"},"cited_evidence":["facts.dmarc_pass"]}'
+```
+
+Open http://127.0.0.1:8501, paste alice's token, and approve or reject the
+escalation. `docker compose down` stops everything; add `-v` to delete the data.
+
 ## Docker Compose
 
 ```bash
-git clone <this repo> && cd TrustGate
-python scripts/init_secrets.py --analyst alice --analyst bob
+git clone https://github.com/ashutosh20git/TrustGate.git && cd TrustGate
+python3 scripts/init_secrets.py --analyst alice --analyst bob
 #   creates .env (with a random POSTGRES_PASSWORD) and secrets/:
 #   mock_soc_token, ingest_token (give it to your SIEM), analyst_tokens (hashes only).
 #   Each analyst's token is printed once: hand it to that analyst, never to the agent.

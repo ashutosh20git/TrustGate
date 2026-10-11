@@ -6,6 +6,8 @@
 
 Mitigata CyberForge 2026 · Team: Ashutosh Neelesh Dubey + teammate · Build window: Sat 31 Oct 2026, 10:00 → Sun 1 Nov 2026, 23:59 IST (about 38 hours)
 
+> **Self-host it:** `python3 scripts/init_secrets.py --analyst you && docker compose up -d --build`, then follow [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) ("Try it in five minutes").
+
 > **Status: built.** The v1 engine, all four v2 must-haves, the two "Should" items, the library, the MCP gateway, the services, the evaluation harness and the test suite are implemented. It runs **fully offline today** (`pytest`, `python -m eval.run`) using the bundled OPA binary and deterministic stand-ins. Running it **live** (real agent, real re-check model, Docker stack) needs the keys and services in [requirements from the team](#requirements-from-the-team); each one is a tracked placeholder that fails closed until filled — see [`PLACEHOLDERS.md`](PLACEHOLDERS.md).
 
 ## Quickstart (offline, no keys)
@@ -402,14 +404,14 @@ Offline is the [quickstart](#quickstart-offline-no-keys) above. To run TrustGate
 setup, connecting your real SOC tools (`TRUSTGATE_SOC_CLIENT`), going live in monitor mode, and operations.
 
 ```bash
-python scripts/init_secrets.py --analyst alice   # creates .env (random POSTGRES_PASSWORD) and secrets/;
-                                                 # prints each analyst token once
+python3 scripts/init_secrets.py --analyst alice  # standard library only; creates .env (random
+                                                 # POSTGRES_PASSWORD) and secrets/; prints each analyst token once
 docker compose up -d --build    # proxy, ingest, detector, OPA, Redis, Postgres, mock-soc, dashboard
 #   dashboard:  http://127.0.0.1:8501   (paste your analyst token)
 #   proxy:      http://127.0.0.1:8080   (agent tool calls)
 #   ingest:     http://127.0.0.1:8081   (SIEM posts alerts with secrets/ingest_token.txt)
 
-python scripts/seed_demo.py                       # seed the rehearsed poisoned email + clean alerts
+docker compose exec ingest python scripts/seed_demo.py   # seed the poisoned email + clean alerts
 docker compose --profile tools run --rm agent --alert-id E-DEMO   # triage it through the gate
 
 # Kubernetes:

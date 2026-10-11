@@ -69,3 +69,16 @@ def test_proxy_loads_the_configured_soc_connector(monkeypatch):
 def test_default_connector_is_the_mock_soc():
     from trustgate.config import Settings
     assert Settings().soc_client == "services.mock_soc.client:MockSOCClient"
+
+
+def test_init_secrets_hash_matches_the_proxy():
+    import importlib.util
+    import pathlib
+
+    from trustgate.analysts import token_hash
+
+    path = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "init_secrets.py"
+    spec = importlib.util.spec_from_file_location("init_secrets", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.token_hash("tok-alice") == token_hash("tok-alice")

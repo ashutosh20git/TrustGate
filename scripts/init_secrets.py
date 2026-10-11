@@ -17,13 +17,16 @@ with a new --analyst name to add one; existing analysts are kept.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import pathlib
 import secrets
-import sys
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from trustgate.analysts import token_hash  # noqa: E402
+def token_hash(token: str) -> str:
+    """Same as trustgate.analysts.token_hash. Kept local so this script needs only
+    the standard library: run it before installing anything (tests check they match)."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SECRETS = ROOT / "secrets"
