@@ -42,11 +42,11 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@v4
         with:
           languages: python
           queries: security-extended
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4
 
   image:
     runs-on: ubuntu-latest
@@ -57,7 +57,7 @@ jobs:
         run: docker build -f docker/Dockerfile -t trustgate:scan .
 
       - name: Trivy (report HIGH and CRITICAL)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           image-ref: trustgate:scan
           severity: HIGH,CRITICAL
@@ -66,7 +66,7 @@ jobs:
           exit-code: "0"
 
       - name: Trivy (any fixable CRITICAL fails)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           image-ref: trustgate:scan
           severity: CRITICAL
