@@ -212,6 +212,33 @@ class Store:
             prev = rec.record_hash
         return True
 
+    def verify_audit_export(self, path: str) -> list[str]:
+        """Compare the chain with the SIEM's copy of it (the JSON-lines export).
+
+        A hash chain alone cannot show that its newest records were deleted, or that someone with
+        database access rewrote every record and recomputed every hash: the result is a valid
+        chain. The copy already sent to the SIEM is outside their reach, so every exported record
+        must still be in the chain with the same hash. Returns the problems found (empty: intact).
+        """
+        problems = [] if self.verify_audit_chain() else ["the hash chain does not verify"]
+        stored = {rec.seq: rec.record_hash for rec in self.audit_trail(limit=10_000_000)}
+        exported = 0
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                exported += 1
+                seq, digest = event.get("seq"), event.get("record_hash")
+                if seq not in stored:
+                    problems.append(f"record {seq} was exported but is missing from the database")
+                elif stored[seq] != digest:
+                    problems.append(f"record {seq} differs from the exported copy")
+        if not exported:
+            problems.append("the export is empty: nothing to compare against")
+        return problems[:50]
+
     def _export(self, rec: AuditRecord) -> None:
         event = json.loads(rec.model_dump_json())
         log.info("trustgate.audit", **{k: v for k, v in event.items() if k in ("kind", "alert_id", "tool", "decision", "tier", "mode")})

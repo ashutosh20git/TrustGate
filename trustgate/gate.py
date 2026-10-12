@@ -344,6 +344,18 @@ class Gate:
                                 recheck_verdict=state.recheck_verdict, tainted_spans=esc.tainted,
                                 recheck_tokens=state.recheck_tokens)
 
+    def _other_t1_causes(self, action: ProposedAction, alert: Alert) -> list[str]:
+        """The T1 checks after the re-check that would also fail, for the analyst's explanation."""
+        out: list[str] = []
+        if alert.ai_evasion_attempt:
+            out.append("T1: AI-evasion attempt on this alert")
+        if action.verdict == "benign":
+            if not any(c.startswith("facts.") for c in action.cited_evidence):
+                out.append("no typed-fact citation")
+            evidence = t1_evidence(alert.facts, alert.source, self.pack.floor.get("t1_evidence"), action.cited_evidence)
+            out += evidence.reasons()
+        return out
+
     def _run_checks(self, action: ProposedAction, alert: Alert | None, mcp: dict[str, Any] | None,
                     state: _State) -> GateDecision:
         # 1. Which tier? (static map; unknown tool escalates)
@@ -394,9 +406,12 @@ class Gate:
             decision.recheck_verdict, decision.recheck_tokens = result.verdict, result.tokens
             policy_input["recheck_verdict"] = result.verdict
             if not (action.verdict == "benign" and result.verdict == "benign"):
-                # The judges' reasons (low confidence, scorecard warnings) are for the analyst only.
+                # The judges' reasons (low confidence, scorecard warnings) are for the analyst only,
+                # with every other T1 check that would also fail: a bare "0.82 below 0.90" does not
+                # tell the analyst what is wrong (docs/BENCHMARKS.md, explanation accuracy).
                 raise _Escalate([f"facts and text disagree: agent={action.verdict}, facts-only={result.verdict}"]
-                                + [f"re-check: {r}" for r in result.reasons[:4]],
+                                + [f"re-check: {r}" for r in result.reasons[:4]]
+                                + self._other_t1_causes(action, alert),
                                 self._tainted(action, alert))
             if not any(c.startswith("facts.") for c in action.cited_evidence):
                 raise _Escalate(["no typed-fact citation"], self._tainted(action, alert))

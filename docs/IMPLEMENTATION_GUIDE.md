@@ -439,7 +439,7 @@ With no URLs at all, `url_reputation` is `clean` (nothing to look up). VirusTota
 backoff). HTTP 401, 403, 429 and 5xx are **failures**, not "no data". A failed lookup is
 recorded in `report.failed`, and the splitter sets `facts.enrichment_failed = True`. The gate
 then refuses T1 on that alert (section 11.2). An unconfigured key only leaves the fact unknown.
-Results are cached on disk for 7 days (`diskcache`). Feed descriptions, which attackers can
+Results are cached on disk for 7 days (SQLite, JSON values only: no pickle). Feed descriptions, which attackers can
 write, are never read: only scores and enums leave this module.
 
 ### 6.8 Detection, tags and severity

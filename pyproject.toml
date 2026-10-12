@@ -30,7 +30,6 @@ ingest = [
     "tldextract>=5.1",
     "python-whois>=0.9",
     "tenacity>=8.2",
-    "diskcache>=5.6",
 ]
 attachments = ["pymupdf>=1.24", "python-docx>=1.1", "openpyxl>=3.1", "python-pptx>=0.6.23"]
 # QR codes (OpenCV) and OCR (Tesseract; needs the tesseract binary) in image attachments.

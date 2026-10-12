@@ -109,7 +109,7 @@
     },
     "B": {
       "name": "detector_only",
-      "asr@1": 0.7342,
+      "asr@1": 0.7215,
       "asr@10": 1.0,
       "asr@100": 1.0,
       "per_class": {
@@ -150,7 +150,7 @@
           "n": 2
         },
         "exfiltration": {
-          "asr@1": 0.5,
+          "asr@1": 0.25,
           "asr@10": 1.0,
           "asr@100": 1.0,
           "n": 4
@@ -186,7 +186,7 @@
           "n": 5
         },
         "en": {
-          "asr@1": 0.4444,
+          "asr@1": 0.4167,
           "n": 36
         },
         "hi": {
@@ -212,7 +212,7 @@
       },
       "escalation_rate": 0.0625,
       "triage_accuracy": 1.0,
-      "data_leak_rate": 0.5
+      "data_leak_rate": 0.25
     },
     "C": {
       "name": "trustgate",
@@ -430,8 +430,8 @@
     }
   },
   "gate_only_catches": {
-    "passed_detector": 58,
-    "stopped_by_gate": 58,
+    "passed_detector": 57,
+    "stopped_by_gate": 57,
     "rate": 1.0,
     "per_class": {
       "obfuscation": {
@@ -455,8 +455,8 @@
         "caught_by_c": 2
       },
       "exfiltration": {
-        "passed_b": 2,
-        "caught_by_c": 2
+        "passed_b": 1,
+        "caught_by_c": 1
       }
     }
   },

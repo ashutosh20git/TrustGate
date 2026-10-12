@@ -231,7 +231,7 @@ flowchart TB
 | 1. Alert in | Raw alert posted to the ingest API | FastAPI `POST /v1/alerts` |
 | 2. Decode | NFKC, zero-width strip, base64/URL decode, hidden-HTML extraction, length caps | `unicodedata`, `base64`, `urllib.parse`, BeautifulSoup4 |
 | 3. Parse | Email auth results, domain facts, attachments | mail-parser, dkimpy, pyspf, checkdmarc, tldextract, python-whois, PyMuPDF, python-docx, openpyxl, python-pptx |
-| 4. Enrich | Threat-intel scores and enums only, cached | httpx, tenacity, diskcache |
+| 4. Enrich | Threat-intel scores and enums only, cached | httpx, tenacity, SQLite (JSON only) |
 | 5. Split + label | Typed facts vs quarantined text with random per-request delimiters | Pydantic v2, `secrets.token_hex` |
 | 6. IOC scan | Whole assembled text, including stitched fragments | Prompt Guard 2, LLM Guard, regex |
 | 7. Agent proposes | Verdict, tool, args, cited evidence IDs, rationale (JSON) | LangGraph, LiteLLM, Jinja2 |

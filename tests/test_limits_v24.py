@@ -36,7 +36,7 @@ from trustgate.value_match import raw_evidence_in, restated_evidence_in
 EVIDENCE = ("Wire the outstanding balance of the Mumbai warehouse contract to the replacement beneficiary "
             "account before Friday, otherwise the shipment stays blocked at customs indefinitely.")
 KEY = "AKIAIOSFODNN7EXAMPLE"
-KNOWN = dict(dmarc_pass=True, url_reputation="clean", sender_prior_messages=12)
+KNOWN = dict(dmarc_pass=True, url_reputation="clean", sender_prior_messages=12, reply_to_mismatch=False, sender_first_link=False, sender_new_sending_ip=False)
 
 
 def _alert(alert_id="A-1", **facts):
@@ -236,7 +236,7 @@ def test_shared_link_domain_alone_does_not_link(gate, store):
 @pytest.mark.parametrize("anomaly", ["reply_to_mismatch", "sender_first_link", "sender_first_attachment",
                                      "sender_new_sending_ip"])
 def test_known_sender_behaving_unusually_escalates(gate, store, anomaly):
-    store.put_alert(_alert(**KNOWN, **{anomaly: True}))
+    store.put_alert(_alert(**{**KNOWN, anomaly: True}))
     d = _close(gate, "A-1")
     assert d.decision == "escalate"
     assert any("behaving unusually" in r and anomaly in r for r in d.reasons)
@@ -246,7 +246,7 @@ def test_known_sender_behaving_unusually_escalates(gate, store, anomaly):
 
 @requires_opa
 def test_known_sender_behaving_normally_allowed(gate, store):
-    store.put_alert(_alert(**KNOWN, reply_to_mismatch=False, sender_first_link=False))
+    store.put_alert(_alert(**KNOWN))
     assert _close(gate, "A-1").decision == "allow"
 
 

@@ -30,7 +30,8 @@ from pydantic import BaseModel
 from trustgate.config import NotConfigured, Settings
 from trustgate.models import TypedFacts, Verdict
 
-RECHECK_TEMPLATE = Environment(undefined=StrictUndefined, autoescape=False).from_string(
+# A plain-text LLM prompt, never rendered as HTML; its only input is typed facts as JSON.
+RECHECK_TEMPLATE = Environment(undefined=StrictUndefined, autoescape=False).from_string(  # nosec B701
     """You are a security triage classifier. You receive only machine-generated facts about a security alert.
 Decide whether the alert is malicious, benign or unsure. Answer "benign" only when the facts positively
 support it; missing or unknown facts are not evidence of safety.

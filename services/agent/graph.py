@@ -33,7 +33,8 @@ ACTIONS = (
 )
 MAX_STEPS = 6
 
-_env = Environment(loader=FileSystemLoader(Path(__file__).parent / "prompts"), autoescape=False)
+# Plain-text LLM prompts built from constants, never HTML.
+_env = Environment(loader=FileSystemLoader(Path(__file__).parent / "prompts"), autoescape=False)  # nosec B701
 SYSTEM_PROMPT = _env.get_template("system.j2").render(actions=ACTIONS)
 
 TOOLS: list[dict[str, Any]] = [

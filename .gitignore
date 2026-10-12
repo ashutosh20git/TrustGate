@@ -21,3 +21,4 @@ eval/results/runs.sqlite
 models/*.json
 !models/README.md
 audit.jsonl
+eval/results/fuzz_crashes/

@@ -32,7 +32,7 @@ from trustgate.provenance import read_stamps, stamp_for
 from trustgate.ratelimit import MemoryRateLimiter
 from trustgate.store import Escalation
 
-KNOWN = dict(dmarc_pass=True, url_reputation="clean", sender_prior_messages=12)
+KNOWN = dict(dmarc_pass=True, url_reputation="clean", sender_prior_messages=12, reply_to_mismatch=False, sender_first_link=False, sender_new_sending_ip=False)
 
 
 def _put(store, alert_id="A-1", tags=None, signals=None, **facts):
@@ -174,7 +174,7 @@ def test_analyst_scores_flag_rubber_stamping(store):
 
 @requires_opa
 def test_explain_names_the_missing_fact(gate, store):
-    _put(store, dmarc_pass=False, url_reputation="clean", sender_prior_messages=12)
+    _put(store, dmarc_pass=False, url_reputation="clean", sender_prior_messages=12, reply_to_mismatch=False, sender_first_link=False, sender_new_sending_ip=False)
     d = gate.decide(ProposedAction(alert_id="A-1", verdict="benign", tool="close_alert", args={"reason": "x"},
                                    cited_evidence=["facts.url_reputation"]))
     out = explain(gate, store.get_escalation(d.escalation_id))
