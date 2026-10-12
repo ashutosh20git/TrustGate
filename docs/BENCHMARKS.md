@@ -22,7 +22,7 @@ the final numbers below are on the fixed code. Raw results are in `eval/results/
 | Adaptive red-team | **Every goal held** at black-, grey- and white-box access (hide, blind, exfiltrate, leak, sabotage). White-box enumerates the whole option space. |
 | AgentDojo, strict policy | **Attack success 0.00** in all four suites (undefended replay: 0.56). Utility 0.65: 37% of clean tasks go to a human. |
 | AgentDojo, field-labels policy | Attack success **0.04** (travel 0.14, slack 0.20, workspace and banking 0.00). Utility 0.95. |
-| Real phishing mail | See the [real-mail section](#3-real-phishing-mail-phishing_pot) |
+| Real phishing mail (12,271 emails) | **0 false benign** for every judge, including the 2,397 that passed DMARC |
 | Synthetic re-check | Ensemble and full T1: 0 false benign, 100% of benign cases pass |
 
 ---
@@ -179,14 +179,31 @@ unknown. Every email is phishing, so every "benign" is a false benign.
 
 **Results:**
 
-<!-- realmail-results -->
+Full corpus, 12,271 emails, all parsed:
+
+| | |
+|---|---|
+| Trusted authserv-id | `microsoft365` |
+| DMARC pass / fail / unknown | 2,397 (20%) / 1,624 (13%) / 8,250 (67%) |
+| Detector flagged AI-directed text | 0.29% |
+
+| Judge | False benign, all 12,271 | False benign, the 2,397 that **passed DMARC** |
+|---|---|---|
+| Scorecard | 0.00 | 0.00 |
+| XGBoost model | 0.00 | 0.00 |
+| Ensemble | 0.00 | 0.00 |
+| Full T1 (ensemble + evidence floor) | **0.00** | **0.00** |
+
+The DMARC-pass subset is the hard one: phishing from attacker-owned or compromised domains that
+authenticates perfectly. None of it was judged benign, because passing auth is never treated as
+strong support and a sender with no history with the organisation cannot meet the evidence floor.
 
 **What broke, and the fixes:**
 
 | Found | Fix |
 |---|---|
 | **Every DMARC result was "unknown"**: Microsoft 365 writes `Authentication-Results` without an authserv-id, so no header matched | `TRUSTGATE_MTA_AUTHSERV_ID=microsoft365`: trust only a topmost header with no authserv-id; any lower one is spoofed. `dmarc=bestguesspass` is not a pass |
-| **61% of real phishing tagged as an AI-evasion attempt**: genuine `Authentication-Results` headers from other hops ("spf=pass") tripped the fake-metadata rules | `metadata.*` detector signals whose only evidence is a genuine (not spoofed) header are dropped. The same claim in the body is still caught. Now 0.67% on the sample |
+| **61% of real phishing tagged as an AI-evasion attempt**: genuine `Authentication-Results` headers from other hops ("spf=pass") tripped the fake-metadata rules | `metadata.*` detector signals whose only evidence is a genuine (not spoofed) header are dropped. The same claim in the body is still caught. Now 0.29% on the full corpus |
 
 **The gap.** There is no matching public corpus of **real benign mail with full headers**, so
 this measures false benigns (letting phishing through), not the cost of strictness on real

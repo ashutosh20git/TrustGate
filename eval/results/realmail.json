@@ -1,0 +1,27 @@
+{
+  "corpus": "phishing_pot (real phishing, honeypot inboxes)",
+  "emails": 12271,
+  "trusted_authserv": "microsoft365",
+  "parsed": 12271,
+  "unparseable": 0,
+  "dmarc": {
+    "pass": 2397,
+    "fail": 1624,
+    "unknown": 8250
+  },
+  "detector_flagged_ai_directed_text": 0.0029,
+  "false_benign_rate": {
+    "scorecard": 0.0,
+    "model": 0.0,
+    "ensemble": 0.0,
+    "t1": 0.0
+  },
+  "false_benign_rate_dmarc_pass": {
+    "scorecard": 0.0,
+    "model": 0.0,
+    "ensemble": 0.0,
+    "t1": 0.0
+  },
+  "dmarc_pass_emails": 2397,
+  "t1_let_through_examples": []
+}
