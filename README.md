@@ -254,7 +254,7 @@ Built on top of the gate. Tests: `tests/test_part2_features.py`, `packs/policy_t
 | **Provenance lost between agents** | Outbound text from a manipulated alert carries a signed provenance stamp; a receiving TrustGate turns it into an IOC (and an AI-evasion tag). Stamps can only raise suspicion; with `TRUSTGATE_PROVENANCE_KEY` shared, signatures are checked | `trustgate/provenance.py`, `Splitter._upstream_provenance` |
 | **Policies not tested against attacks** | Rego unit tests for every floor and pack rule (`opa test packs/`), and the CI eval guard now fails if attack success rises for any attack class or language, not only overall | `packs/policy_test.rego`, `scripts/ci_eval_guard.py` |
 | **Indian languages unmeasured** | Tamil, Bengali, Telugu and Marathi payloads beside Hindi and Hinglish, with per-language results (offline simulator: config B passes all 20 new ones, config C stops all 20). Translations are the team's own, not reviewed by native speakers | `eval/payloads.py`, `per_language` in `eval/results/summary.json` |
-| **Compliance evidence** | Evidence packs from the hash-chained audit trail for CERT-In (6-hour reporting, 180-day logs), the DPDP Act 2023 (s.8(5), s.8(6)) and ISO/IEC 27001:2022 (A.5.24-5.28, A.8.15-8.16). Evidence for a review, not a compliance determination | `trustgate/compliance.py`, `GET /v1/compliance/{framework}`, `scripts/compliance_report.py` |
+| **Compliance evidence** | Evidence packs from the hash-chained audit trail for CERT-In (6-hour reporting, 180-day logs), the DPDP Act 2023 (s.8(5), s.8(6)), ISO/IEC 27001:2022 (A.5.24-5.28, A.8.15-8.16) and NIST SP 800-53 AU (AU-2 to AU-12, checked against the SIEM export). Evidence for a review, not a compliance determination | `trustgate/compliance.py`, `GET /v1/compliance/{framework}`, `scripts/compliance_report.py` |
 | **Quishing and text in images** | QR codes in attached images and in PDF pages are decoded (OpenCV) into untrusted evidence, their links go to URL reputation, and `facts.attachment_has_qr` is set; image text is read with Tesseract OCR and scanned like any evidence | `trustgate/ingest/attachments.py` |
 
 ## v2.4: the stated limits, closed or narrowed
@@ -266,7 +266,7 @@ Tests: `tests/test_limits_v24.py`.
 | Hex, ROT13 and paraphrased leaks | Hex (plain, spaced, `\x` escapes) and ROT13 are decoded at ingest and on outbound text; secrets hidden in ROT13 are caught by pattern. Light paraphrase (most of an evidence item's distinctive words reappearing, in any order) escalates. **Still open:** a full rewrite in other words needs a semantic model | `trustgate/ingest/decode.py`, `value_match.restated_evidence_in` |
 | An MCP tool's changed response caught only after it ran | The response is still withheld and the tool disabled, and now the action that call performed is rolled back. **Still open:** the change is seen only after the call, by nature of a response | `trustgate/mcp/gateway.py` |
 | A campaign spread across sender domains | T1 actions are also counted per link domain, per attachment hash and per near-duplicate body (MinHash bands; bodies differing in names and amounts share a key). Shared providers are exempt. **Still open:** a campaign that varies sender, link, attachment and wording at once | `trustgate/ingest/campaign.py`, `Gate._campaign_keys` |
-| A compromised account with real history | A known sender behaving unusually (Reply-To on another domain, parsed from headers; first link, first attachment or new sending IP, from MTA/SIEM history) no longer counts as costly support. **Still open:** a hijacked mailbox that behaves exactly as usual | `evidence_floor.py`, `packs/floor.json` `costly_negated_by` |
+| A compromised account with real history | A known sender behaving unusually (Reply-To on another domain, parsed from headers; first link, first attachment or new sending IP, from MTA/SIEM history) no longer counts as costly support, and history counts only when those signals are supplied at all. **Still open:** a hijacked mailbox that behaves exactly as usual | `evidence_floor.py`, `packs/floor.json` `costly_negated_by` |
 | Standalone gateway rollback | Reverse actions run on the upstream MCP server (never listed to or callable by the agent); the mock SOC MCP server exposes them | `Gateway._undo_executor`, `services/mock_soc/mcp_server.py` |
 
 Also fixed: the mock SOC MCP server's `whitelist_indicator` and `suppress_rule` lacked the `ttl_hours` argument the gate requires, so through the gateway they could never pass.
@@ -483,7 +483,7 @@ Published ports bind to `127.0.0.1` unless `TRUSTGATE_BIND_ADDR` says otherwise.
 
 ## Evaluation v2
 
-**Benchmark results** (adaptive red-team, AgentDojo, real phishing mail), what they broke and how it was fixed: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+**Benchmark results**, what they broke and how it was fixed: [docs/BENCHMARKS.md](docs/BENCHMARKS.md). Round 1: adaptive red-team, AgentDojo, real phishing mail. Round 2: legitimate mail (Enron), account takeover, InjecAgent, ASB, BIPIA, real ATT&CK telemetry (OTRF), fuzzing, Bandit/pip-audit/CodeQL/Trivy, API fuzzing, audit tampering, OWASP LLM + agentic coverage, explanation accuracy.
 
 The headline changes: not only how many attacks TrustGate stops, but **how many got past the detector and were stopped by the gate**. That number is what makes the "use both" pitch credible.
 

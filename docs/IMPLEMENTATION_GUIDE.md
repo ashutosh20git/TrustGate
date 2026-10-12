@@ -168,7 +168,7 @@ trustgate/                 the library (the engine)
   store.py                 SQLModel tables: alerts, audit, escalations, ledger, pins
   analysts.py              analyst bearer tokens -> identities
   counterfactual.py        "would allow if ..." explanations
-  compliance.py            CERT-In / DPDP / ISO 27001 evidence packs
+  compliance.py            CERT-In / DPDP / ISO 27001 / NIST 800-53 AU evidence packs
   provenance.py            cross-agent provenance stamps
   render.py                renders an alert for the agent, with random delimiters
   ingest/split.py          the evidence splitter
@@ -217,7 +217,7 @@ is about producing and checking these objects.
 | Identities | `hosts` (hostname regex), `accounts` (`[A-Za-z0-9._@\-]{1,64}`) | used only for T2 matching |
 | Attachments | `attachment_count`, `attachment_parse_failed`, `attachment_hidden_content`, `attachment_has_macros`, `attachment_has_qr` | computed by parsers; can only push toward suspicion |
 | Sender history | `sender_prior_messages` | from MTA/SIEM history; the fact a fresh campaign cannot buy |
-| Compromised-account signals | `reply_to_mismatch`, `sender_first_link`, `sender_first_attachment`, `sender_new_sending_ip` | any `True` cancels sender history as support |
+| Compromised-account signals | `reply_to_mismatch`, `sender_first_link`, `sender_first_attachment`, `sender_new_sending_ip` | any `True` cancels sender history as support; `reply_to_mismatch`, `sender_first_link` and `sender_new_sending_ip` must be *known* for history to count at all |
 | Campaign keys | `sender_domain`, `url_domains`, `content_bands` (`b<n>:<16 hex>`) | for rate limits only |
 | Failure | `enrichment_failed` | a threat-intel lookup errored: facts are *missing*, not clean |
 | Organisation history | `org_replied_to_sender`, `org_sender_domain_messages`, `org_url_domain_first_seen`, `org_attachment_prevalence` | from SIEM / mail gateway; "someone here replied" is costly support, an unseen link domain cancels history ([RECHECK.md](RECHECK.md)) |
@@ -736,7 +736,8 @@ lives in `packs/floor.json` → `t1_evidence`, so no pack can loosen it.
 | No failed lookup | `facts.enrichment_failed` must be false | A 429 or outage leaves facts missing, not clean |
 | Core facts known | `core_facts`: email → `dmarc_pass`; network/auth → `ip_abuse_score`; endpoint → `sandbox_verdict` | Unknown (`None`, `unknown`, `not_run`) is not evidence of safety |
 | Costly support | `costly_support`: email → `sender_prior_messages >= 3` | An attacker who owns a domain passes SPF/DKIM/DMARC, buys an aged domain and links to a clean file host. What they cannot buy for a fresh campaign is history with your organisation |
-| Compromised account | `costly_negated_by`: `reply_to_mismatch`, `sender_first_link`, `sender_first_attachment`, `sender_new_sending_ip` | A hijacked real mailbox has history; if it behaves unusually, the history stops counting |
+| Compromised account | `costly_negated_by`: `reply_to_mismatch`, `sender_first_link`, `sender_first_attachment`, `sender_new_sending_ip`, `org_url_domain_first_seen` | A hijacked real mailbox has history; if it behaves unusually, the history stops counting |
+| Behaviour known | `costly_requires_known`: `reply_to_mismatch` (parsed from the headers), `sender_first_link`, `sender_new_sending_ip` (from the SIEM / mail gateway) | A signal nobody supplied is not evidence of normal behaviour: before this, 75% of real phishing replayed from a trusted mailbox could be closed ([BENCHMARKS.md](BENCHMARKS.md)) |
 | Cited support | `benign_support`: at least one **cited** fact meets a condition: `spf_pass`/`dkim_pass`/`dmarc_pass == true`, `url_reputation == clean`, `sandbox_verdict == clean`, `ip_abuse_score < 25`, `sender_prior_messages >= 1`, `sender_domain_age_days >= 30` | Citing `facts.ioc_ips` proves nothing about "benign" |
 
 The practical consequence: **without sender history from your MTA or SIEM, every email T1
@@ -1003,7 +1004,11 @@ Computed on demand, never on the decision path.
 Each `AuditRecord` stores `prev_hash` (the previous record's hash) and
 `record_hash = SHA-256(prev_hash + canonical JSON of the record)`. Timestamps are canonicalised
 as UTC so the hash is stable whether the database returns aware or naive datetimes.
-`verify_audit_chain` walks the chain; any edit, deletion or insertion breaks it.
+`verify_audit_chain` walks the chain; any edit, deletion in the middle, reordering or insertion
+breaks it. Two attacks leave a valid chain: deleting the newest records, and rewriting every
+record with recomputed hashes. `verify_audit_export(path)` catches both by comparing the chain
+with the copy already exported to the SIEM (every exported `seq` must be present with the same
+`record_hash`), so **configure the SIEM export**; `tests/test_audit_tamper.py` covers all six.
 `GET /v1/metrics` reports `audit_chain_ok`.
 
 Appends are serialised: a thread lock within a process, and on Postgres a transaction-scoped
@@ -1019,7 +1024,7 @@ Splunk HTTP Event Collector (`SPLUNK_HEC_URL` + `SPLUNK_HEC_TOKEN`, sourcetype
 
 ### 14.4 Compliance evidence packs (`trustgate/compliance.py`)
 
-`GET /v1/compliance/{cert-in|dpdp|iso27001}` and `scripts/compliance_report.py` build evidence
+`GET /v1/compliance/{cert-in|dpdp|iso27001|nist-800-53}` and `scripts/compliance_report.py` build evidence
 from the audit trail. "Evidence for a review, not a compliance determination": things
 TrustGate cannot see (log storage location, NTP source, legal reportability) are marked
 `confirm`.

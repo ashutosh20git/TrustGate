@@ -44,7 +44,7 @@ agent = ["litellm>=1.40", "langgraph>=0.2", "langchain-core>=0.2"]
 dashboard = ["streamlit>=1.35", "plotly>=5.20", "pandas>=2.2"]
 eval = ["pandas>=2.2", "numpy>=1.26"]
 bench = ["agentdojo==0.1.35"]  # eval/agentdojo_bench.py
-dev = ["pytest>=8", "fakeredis>=2.23", "opentelemetry-sdk>=1.24", "segno>=1.6"]
+dev = ["pytest>=8", "fakeredis>=2.23", "opentelemetry-sdk>=1.24", "segno>=1.6", "schemathesis>=4.0,<5"]
 
 [tool.setuptools.packages.find]
 include = ["trustgate*"]
