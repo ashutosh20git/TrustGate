@@ -234,7 +234,7 @@ flowchart TB
 | 4. Enrich | Threat-intel scores and enums only, cached | httpx, tenacity, SQLite (JSON only) |
 | 5. Split + label | Typed facts vs quarantined text with random per-request delimiters | Pydantic v2, `secrets.token_hex` |
 | 6. IOC scan | Whole assembled text, including stitched fragments | Prompt Guard 2, LLM Guard, regex |
-| 7. Agent proposes | Verdict, tool, args, cited evidence IDs, rationale (JSON) | LangGraph, LiteLLM, Jinja2 |
+| 7. Agent proposes | Verdict, tool, args, cited evidence IDs, rationale (JSON) | LangGraph, LiteLLM |
 | 8. Tier + checks | Re-check, value-match, MCP pin check | Ollama (Qwen/Llama, JSON mode) |
 | 9. Policy | Per-app pack plus floor rules; rate limit | OPA (Rego), Redis |
 | 10. Allow / escalate | Output scan, execute or queue, audit | Presidio, mock SOC, SQLModel |

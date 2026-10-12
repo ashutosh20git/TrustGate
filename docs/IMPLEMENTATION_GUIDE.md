@@ -556,7 +556,7 @@ fetch → triage ⇄ (read tools: query_logs, lookup_ioc) → validate → submi
                          ↘ after 6 steps or 2 invalid outputs → give_up (escalate)
 ```
 
-- **System prompt** (`prompts/system.j2`): explains typed facts vs untrusted evidence, lists
+- **System prompt** (`prompts/system.txt`): explains typed facts vs untrusted evidence, lists
   the action menu with tiers, and states the rules (T1 needs supporting facts, T2 targets must
   be in facts, `whitelist_indicator`/`suppress_rule` need `ttl_hours` ≤ 24, escalate when
   unsure).
@@ -708,7 +708,7 @@ Backends (`TRUSTGATE_RECHECK_BACKEND`):
 
 | Backend | How | Notes |
 |---|---|---|
-| `ollama` | `POST /api/generate` with a Jinja2 prompt, `format: json`, temperature 0, seed 0, validated against `{"verdict": ...}` | `TRUSTGATE_RECHECK_MODEL`, e.g. `qwen2.5:3b`. Tokens counted for overhead metrics |
+| `ollama` | `POST /api/generate` with a plain-text prompt, `format: json`, temperature 0, seed 0, validated against `{"verdict": ...}` | `TRUSTGATE_RECHECK_MODEL`, e.g. `qwen2.5:3b`. Tokens counted for overhead metrics |
 | `xgboost` | `multi:softprob` over 14 numeric features (`FEATURE_ORDER`; enums mapped to numbers, `None` → NaN) | `scripts/train_recheck.py`. The Docker image bakes in a **starter model trained on synthetic alerts** |
 
 The prompt says: answer "benign" only when facts positively support it; unknown is not

@@ -22,7 +22,8 @@ jobs:
 
       - name: Install
         run: |
-          python -m pip install -U pip
+          # The runner's bundled setuptools can carry advisories pip-audit rightly fails on.
+          python -m pip install -U pip "setuptools>=83"
           pip install ".[ingest,attachments,output-scan,recheck-xgb,mcp,server,eval,dev]" bandit pip-audit
 
       - name: Bandit (any high-severity finding fails)

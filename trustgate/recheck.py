@@ -24,23 +24,20 @@ from dataclasses import dataclass
 from typing import Callable, Protocol
 
 import httpx
-from jinja2 import Environment, StrictUndefined
 from pydantic import BaseModel
 
 from trustgate.config import NotConfigured, Settings
 from trustgate.models import TypedFacts, Verdict
 
-# A plain-text LLM prompt, never rendered as HTML; its only input is typed facts as JSON.
-RECHECK_TEMPLATE = Environment(undefined=StrictUndefined, autoescape=False).from_string(  # nosec B701
-    """You are a security triage classifier. You receive only machine-generated facts about a security alert.
+# A plain-text LLM prompt; its only input is typed facts as JSON, put in place of {facts_json}.
+RECHECK_TEMPLATE = """You are a security triage classifier. You receive only machine-generated facts about a security alert.
 Decide whether the alert is malicious, benign or unsure. Answer "benign" only when the facts positively
 support it; missing or unknown facts are not evidence of safety.
 
 Facts (JSON):
-{{ facts_json }}
+{facts_json}
 
 Respond with JSON only: {"verdict": "malicious" | "benign" | "unsure"}"""
-)
 
 # Every fact the re-check is given, in a fixed order: the model must not be blind to
 # any of them (it used to see 14 of 21, missing sender history and compromised-account signs).
@@ -71,7 +68,7 @@ class Recheck(Protocol):
 
 
 def render_prompt(facts: TypedFacts) -> str:
-    return RECHECK_TEMPLATE.render(facts_json=json.dumps(facts.recheck_view(), sort_keys=True))
+    return RECHECK_TEMPLATE.replace("{facts_json}", json.dumps(facts.recheck_view(), sort_keys=True))
 
 
 class OllamaRecheck:

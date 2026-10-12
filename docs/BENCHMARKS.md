@@ -399,14 +399,16 @@ amount must come from the user's request either way.
 | **Fuzzing** | A forged "version needed to extract" in an attachment's zip header raised `NotImplementedError` outside the parser's fail-closed block: **the whole email failed to ingest**. An attacker could keep a phishing email out of the queue | Magic-byte detection inside the fail-closed block; the attachment is marked unparseable and the email is ingested |
 | **Schemathesis** | `POST /v1/tools/{tool}` copied the URL's tool name into the action without validation; an invalid name was stored with the escalation and **every later read of the analyst queue failed** (500) | The action is re-validated (422 on a bad name); a malformed stored action can no longer take the queue down |
 | **Schemathesis** | `?limit=9223372036854775808` on `/v1/audit` and `/v1/alerts` overflowed the database driver (500) | Limits bounded (1-10,000 and 1-1,000) |
-| **Bandit** | Two high-severity findings, both false positives: Jinja2 without autoescape (plain-text LLM prompts, never HTML) and bidirectional-control characters in a source file (the decoder's own regex for them) | Annotated with the reason; the regex now uses `\u` escapes so the source holds no invisible characters |
+| **Bandit** | Two high-severity findings, both false positives: Jinja2 without autoescape (plain-text LLM prompts, never HTML) and bidirectional-control characters in a source file (the decoder's own regex for them) | The prompts are now plain strings, not Jinja2 (this also clears CodeQL's two matching alerts); the regex now uses `\u` escapes so the source holds no invisible characters |
 
 After the fixes: Bandit has no high-severity finding, pip-audit no known vulnerability, and the
 API fuzz passes 300 generated requests per operation, with and without valid tokens, with no
 server error, no response to a wrong token, and no tool ever executed. CI now runs Bandit,
 pip-audit and a fuzz smoke test on every push, and CodeQL (security-extended) and Trivy (fails
 on a fixable critical image CVE) in `.github/workflows/security.yml`. CodeQL and Trivy cannot
-run in this environment; their first results arrive with the first CI run.
+run in this environment; their first results arrive with the first CI run. In CI, pip-audit also
+audits the runner's own tools: its bundled setuptools 79.0.1 had an advisory (PYSEC-2026-3447),
+so the workflow upgrades setuptools before auditing. TrustGate does not depend on setuptools at run time.
 
 ## 11. Compliance
 
