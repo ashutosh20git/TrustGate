@@ -1,0 +1,22 @@
+{
+  "banking": {
+    "trustgate_field_labels": 0.0,
+    "trustgate_strict": 0.0,
+    "trustgate_strict_stock_detector": 0.0
+  },
+  "slack": {
+    "trustgate_field_labels": 0.2,
+    "trustgate_strict": 0.0,
+    "trustgate_strict_stock_detector": 0.0
+  },
+  "travel": {
+    "trustgate_field_labels": 0.1429,
+    "trustgate_strict": 0.0,
+    "trustgate_strict_stock_detector": 0.0
+  },
+  "workspace": {
+    "trustgate_field_labels": 0.0,
+    "trustgate_strict": 0.0,
+    "trustgate_strict_stock_detector": 0.0
+  }
+}

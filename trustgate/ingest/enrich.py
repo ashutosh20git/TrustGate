@@ -30,6 +30,7 @@ def url_verdict(answers: list[str], quorum: int) -> str:
     if bad:
         return max(bad, key=_REPUTATION_ORDER.__getitem__)
     return "clean" if len(known) >= max(1, quorum) else "unknown"
+MALICIOUS_ABUSE = 50  # an IP's own AbuseIPDB confidence at which it counts as malicious
 _SANDBOX_ORDER = {"not_run": 0, "clean": 1, "suspicious": 2, "malicious": 3}
 
 
@@ -40,6 +41,7 @@ class EnrichmentReport:
     url_reputation: str = "unknown"
     sandbox_verdict: str = "not_run"
     sender_domain_age_days: int | None = None
+    malicious_ips: list[str] = field(default_factory=list)  # IPs whose own abuse score is high
     sources: list[str] = field(default_factory=list)  # "abuseipdb", "virustotal: not configured", ...
     failed: list[str] = field(default_factory=list)   # lookups that errored: their facts are missing, not clean
 
@@ -193,8 +195,10 @@ class ThreatIntel:
         def safe(fn, arg):
             return self._safe(fn, arg, report)
 
-        scores = [s for s in (safe(self.abuseipdb_score, ip) for ip in ips) if s is not None]
+        per_ip = {ip: safe(self.abuseipdb_score, ip) for ip in ips}
+        scores = [s for s in per_ip.values() if s is not None]
         report.ip_abuse_score = max(scores) if scores else None
+        report.malicious_ips = [ip for ip, score in per_ip.items() if score is not None and score >= MALICIOUS_ABUSE]
         for ip in ips[:5]:
             report.asn = report.asn or safe(self.otx_asn, ip)
 

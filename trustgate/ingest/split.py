@@ -230,6 +230,8 @@ class Splitter:
                 facts["url_reputation"] = report.url_reputation
             if facts.get("sandbox_verdict", "not_run") == "not_run":
                 facts["sandbox_verdict"] = report.sandbox_verdict
+            if report.malicious_ips and not facts.get("malicious_ips"):
+                facts["malicious_ips"] = report.malicious_ips
             if report.failed:
                 facts["enrichment_failed"] = True
             notes.extend(report.sources)
@@ -321,6 +323,23 @@ class Splitter:
 
     def _detect(self, alert: Alert, builder: EvidenceBuilder) -> None:
         result = self.detector.scan(builder.scan_parts)
+        # Genuine Authentication-Results headers from other servers on the path say "spf=pass" by
+        # design; the fake-metadata rules are for such claims in the body. Other rules still apply.
+        auth_headers = {e.id for e in alert.evidence
+                        if e.field.startswith("email.header.Authentication-Results[") and "spoofed_metadata" not in e.flags}
+        kept = [sig for sig in result.signals
+                if not (sig.rule.startswith("metadata.") and sig.evidence_ids
+                        and set(sig.evidence_ids) <= auth_headers)]
+        if len(kept) != len(result.signals):
+            from trustgate.detector import heuristics
+
+            best: dict[str, float] = {}
+            for sig in kept:
+                best[sig.rule] = max(best.get(sig.rule, 0.0), sig.score)
+            model = max((sig.score for sig in kept if sig.source not in ("regex", "stitch")), default=0.0)
+            result.score = round(max(heuristics.combine(list(best.values())), model), 4)
+            result.flagged = result.score >= self.detector.threshold
+            result.signals = kept
         alert.ioc_signals = result.signals
         alert.detector_score = result.score
         alert.detectors_run = result.detectors_run

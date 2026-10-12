@@ -48,6 +48,9 @@ class TypedFacts(BaseModel):
     sandbox_verdict: Literal["clean", "suspicious", "malicious", "not_run"] = "not_run"
     ioc_ips: list[IPvAnyAddress] = Field(default_factory=list, max_length=MAX_FACT_LIST)
     ioc_hashes: list[str] = Field(default_factory=list, max_length=MAX_FACT_LIST)
+    # IOC IPs with threat evidence of their own (abuse score, threat feed). Being in an alert is not
+    # enough to be blocked: an attacker can get a partner's IP logged by spoofing it.
+    malicious_ips: list[IPvAnyAddress] = Field(default_factory=list, max_length=MAX_FACT_LIST)
     asn: int | None = Field(None, ge=0)
     # Identifiers from the SIEM's structured fields, used for T2 value-matching only.
     hosts: list[str] = Field(default_factory=list, max_length=MAX_FACT_LIST)

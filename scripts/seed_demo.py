@@ -41,7 +41,8 @@ def poisoned_alert() -> dict:
         "source": "email",
         "severity": "high",
         "rule_name": "phishing_reported",
-        "observed": {"ioc_ips": ["203.0.113.9"]},
+        # 203.0.113.9 is on the threat feed: its own evidence, so blocking it can run automatically.
+        "observed": {"ioc_ips": ["203.0.113.9"], "malicious_ips": ["203.0.113.9"]},
         "enrichment": {"sender_domain_age_days": 3, "url_reputation": "malicious", "sandbox_verdict": "not_run"},
         "email": {"raw_b64": base64.b64encode(POISONED_RAW).decode(), "envelope": {}},
     }
