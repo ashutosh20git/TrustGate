@@ -80,6 +80,16 @@ AI_DIRECTED_RULES: tuple[Rule, ...] = (
     _r("metadata.x_header", "fake_metadata", 0.5,
        r"\bx-[a-z-]*(verified|trusted|scan|spam|virus)[a-z-]*\s*:\s*(pass|clean|true|yes|0)\b"),
     _r("metadata.trust_label", "fake_metadata", 0.7, r"\btrust[_ ]?(level|label)?\s*[:=]\s*\"?(trusted|high|verified)\b"),
+    # Indirect injection framed as the user's own request (AgentDojo "important_instructions"
+    # and similar): a detour before the real task, a message "from me to you", pseudo-tags.
+    _r("indirect.task_detour", "indirect", 0.75,
+       r"\bbefore\s+(you\s+)?(can\s+)?(solve|complete|continue|finish|answer|do|start)\b[^.\n]{0,40}"
+       r"\b(task|request|question|job)\b[^.\n]{0,60}\b(do|perform|complete|follow)\b[^.\n]{0,20}\b(first|following)\b"),
+    _r("indirect.message_from_user", "indirect", 0.6,
+       r"\b(important|urgent)\s+(message|instructions?|note)\s+from\s+me\b[^.\n]{0,60}\bto\s+you\b"),
+    _r("indirect.after_you_do_that", "indirect", 0.35,
+       r"\bafter\s+you\s+(do|have\s+done|complete)\s+(that|this)\b[^.\n]{0,40}\b(task|request)\b"),
+    _r("indirect.info_tag", "indirect", 0.55, r"</?\s*(information|important|instruction|admin|note)\s*>"),
     # Exfiltration requests
     _r("exfil.send_secrets", "exfil", 0.8,
        r"\b(send|forward|email|e-mail|post|upload|transmit|exfiltrate|copy)\b[^.\n]{0,40}"

@@ -18,7 +18,7 @@ def _alert(store, **facts):
 
 @requires_opa
 def test_t2_target_in_facts_allowed(gate, store):
-    _alert(store, ioc_ips=["203.0.113.9"], ip_abuse_score=90)
+    _alert(store, ioc_ips=["203.0.113.9"], malicious_ips=["203.0.113.9"], ip_abuse_score=90)
     d = gate.decide(ProposedAction(alert_id="A-1", verdict="malicious", tool="block_ip",
                                    args={"ip": "203.0.113.9"}, cited_evidence=["facts.ioc_ips"]))
     assert d.decision == "allow"

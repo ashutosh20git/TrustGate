@@ -153,6 +153,13 @@ def extract_html(html: str) -> tuple[str, list[str]]:
     return visible, hidden
 
 
+def _readable(candidate: str) -> bool:
+    """Decoded text worth keeping: words, or a long number (a card or account number encoded to
+    hide it decodes to digits only, so requiring letters let it through)."""
+    return (len(candidate) >= 8 and _printable_ratio(candidate) > 0.9
+            and (re.search(r"[A-Za-z]{3}", candidate) is not None or sum(ch.isdigit() for ch in candidate) >= 8))
+
+
 def _printable_ratio(s: str) -> float:
     if not s:
         return 0.0
@@ -172,7 +179,7 @@ def decode_blobs(text: str, depth: int = 2) -> list[str]:
                 candidate = raw.decode("utf-8")
             except (binascii.Error, ValueError, UnicodeDecodeError):
                 continue
-            if len(candidate) >= 8 and _printable_ratio(candidate) > 0.9 and re.search(r"[A-Za-z]{3}", candidate):
+            if _readable(candidate):
                 found.append(candidate)
                 if depth > 1:
                     found.extend(decode_blobs(candidate, depth - 1))
@@ -187,7 +194,7 @@ def decode_blobs(text: str, depth: int = 2) -> list[str]:
             candidate = bytes.fromhex(digits).decode("utf-8")
         except (ValueError, UnicodeDecodeError):
             continue  # hashes and binary decode to nothing readable
-        if len(candidate) >= 8 and _printable_ratio(candidate) > 0.9 and re.search(r"[A-Za-z]{3}", candidate):
+        if _readable(candidate):
             found.append(candidate)
     rot = rot13_if_readable(text)
     if rot:

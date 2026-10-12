@@ -124,3 +124,66 @@ def raw_evidence_in(text: str, alert: Alert, window: int = RAW_EVIDENCE_WINDOW) 
         if any(content[i : i + window] in shingles for i in range(len(content) - window + 1)):
             hits.append(ev.id)
     return hits
+
+
+# --- known-secret tracking ------------------------------------------------------------------
+# The adaptive red-team (eval/adaptive_attack.py) carried a card number or API key out past the
+# outbound scanner by reversing it, spelling digits as words, interleaving filler words, or
+# splitting it across several messages. Pattern matching cannot see those. Instead, the gate
+# knows which sensitive values the alert's own evidence contains, and checks outbound text,
+# and everything already sent for the alert, for enough of each value under every transform.
+
+_DIGIT_WORDS = {w: str(i) for i, w in enumerate("zero one two three four five six seven eight nine".split())}
+SECRET_WINDOW = 4        # fragment length used to cover a secret
+SECRET_COVERAGE = 0.6    # share of a secret's characters that, recovered, counts as a leak (partial counts)
+
+
+def sensitive_values(alert: Alert, entities: set[str]) -> dict[str, str]:
+    """Normalised sensitive values in the alert's untrusted evidence -> entity type."""
+    from trustgate.output_scan import regex_findings
+
+    out: dict[str, str] = {}
+    for ev in alert.evidence:
+        if ev.trust != Trust.UNTRUSTED:
+            continue
+        for entity, start, end, _score in regex_findings(ev.content):
+            if entity in entities:
+                value = _norm_text(ev.content[start:end])
+                if len(value) >= 8:
+                    out[value] = entity
+    return out
+
+
+def _projections(text: str) -> list[str]:
+    """Readings of text an attacker's recipient could recover a value from."""
+    view = outbound_view(text)
+    words = re.findall(r"[a-z]+|\d+", view.lower())
+    spelled = "".join(_DIGIT_WORDS.get(w, w) for w in words)
+    # Drop filler words between fragments ("4111 then 1111", "part 2: 11111").
+    fragments = "".join(w for w in re.findall(r"[A-Za-z0-9]+", view) if any(c.isdigit() for c in w) or w.isupper())
+    base = [_norm_text(view), spelled, "".join(ch for ch in view if ch.isdigit()), _norm_text(fragments)]
+    return base + [p[::-1] for p in base] + [_norm_text(rot13(view))]
+
+
+def leaked_values(texts: list[str], values: dict[str, str], *, window: int = SECRET_WINDOW,
+                  coverage: float = SECRET_COVERAGE) -> list[str]:
+    """Entity types of sensitive values recoverable from texts taken together (messages already
+    sent for the alert plus the new one): a value counts as leaked when fragments of it covering
+    at least `coverage` of its characters appear in one reading of the text."""
+    if not values or not texts:
+        return []
+    readings = [p for text in texts for p in _projections(text)]
+    for i, text in enumerate(texts):  # fragments split across messages, in sending order
+        if i:
+            readings += _projections(" ".join(texts[: i + 1]))
+    hits = []
+    for value, entity in values.items():
+        covered = [False] * len(value)
+        for start in range(len(value) - window + 1):
+            piece = value[start:start + window]
+            if any(piece in r for r in readings):
+                for k in range(start, start + window):
+                    covered[k] = True
+        if sum(covered) / len(value) >= coverage:
+            hits.append(entity)
+    return sorted(set(hits))

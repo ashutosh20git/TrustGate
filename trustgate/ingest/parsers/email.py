@@ -50,8 +50,16 @@ class ParsedEmail:
     auth: AuthFacts = field(default_factory=AuthFacts)
 
 
+# Microsoft 365 / Exchange Online writes Authentication-Results without the authserv-id RFC 8601
+# requires ("spf=pass (sender IP is ...) ...; dmarc=..."). With TRUSTGATE_MTA_AUTHSERV_ID set to
+# this value, the topmost header *without* an authserv-id is the trusted one, and any lower header
+# without one is flagged as spoofed, exactly as for a named authserv-id.
+MICROSOFT_365 = "microsoft365"
+
+
 def _authserv_id(header_value: str) -> str:
-    return header_value.split(";", 1)[0].strip().lower()
+    first = header_value.split(";", 1)[0].strip().lower()
+    return "" if "=" in first else first  # no authserv-id: the first clause is already a result
 
 
 def _result_to_bool(value: str | None) -> bool | None:
@@ -71,6 +79,8 @@ def auth_from_headers(headers: list[str], trusted_authserv_id: str | None) -> tu
     if not trusted_authserv_id or not headers:
         return AuthFacts(), spoofed
     trusted_id = trusted_authserv_id.strip().lower()
+    if trusted_id == MICROSOFT_365:
+        trusted_id = ""
     facts = AuthFacts()
     if _authserv_id(headers[0]) == trusted_id:
         results = {m.group(1).lower(): m.group(2) for m in AUTH_RESULT.finditer(headers[0])}

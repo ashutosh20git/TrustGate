@@ -213,7 +213,7 @@ is about producing and checking these objects.
 |---|---|---|
 | Email auth | `spf_pass`, `dkim_pass`, `dmarc_pass` | `bool | None`. `None` means unknown, never "pass" |
 | Reputation | `sender_domain_age_days`, `url_reputation` (`clean/suspicious/malicious/unknown`), `ip_abuse_score` (0-100), `sandbox_verdict` (`clean/suspicious/malicious/not_run`), `asn` | |
-| IOCs | `ioc_ips` (validated IPs), `ioc_hashes` (hex SHA-256 only) | up to 256 each |
+| IOCs | `ioc_ips` (validated IPs), `malicious_ips` (IPs with threat evidence of their own: SIEM/threat feed, or AbuseIPDB score ≥ 50), `ioc_hashes` (hex SHA-256 only) | up to 256 each. Being in `ioc_ips` only means the IP appeared in the alert (it may be spoofed); `block_ip` needs `malicious_ips` |
 | Identities | `hosts` (hostname regex), `accounts` (`[A-Za-z0-9._@\-]{1,64}`) | used only for T2 matching |
 | Attachments | `attachment_count`, `attachment_parse_failed`, `attachment_hidden_content`, `attachment_has_macros`, `attachment_has_qr` | computed by parsers; can only push toward suspicion |
 | Sender history | `sender_prior_messages` | from MTA/SIEM history; the fact a fresh campaign cannot buy |
@@ -315,7 +315,14 @@ authserv-id equals your MTA's** (`TRUSTGATE_MTA_AUTHSERV_ID`). Your MTA prepends
 above whatever the message carried, so the top one is yours. An attacker can write their own
 `Authentication-Results: mx.corp.example; spf=pass ...` into the message. Any header claiming
 your authserv-id **below** the top is flagged `spoofed_metadata` and kept as untrusted
-evidence. Other `Authentication-Results` headers are untrusted evidence too.
+evidence. Other `Authentication-Results` headers are untrusted evidence too. Genuine
+headers from other hops (no claim of your authserv-id) do not count as an AI-evasion attempt;
+the same claim written into the body still does.
+
+**Microsoft 365 / Exchange Online** writes its `Authentication-Results` without an authserv-id
+(`spf=pass (sender IP is ...) ...`). Set `TRUSTGATE_MTA_AUTHSERV_ID=microsoft365`: then only a
+topmost header *without* an authserv-id is trusted, and any lower one is `spoofed_metadata`.
+`dmarc=bestguesspass` is not a pass.
 
 Result mapping (`_result_to_bool`): `pass` → `True`; `fail/softfail/permerror/hardfail` →
 `False`; anything else (`none`, `neutral`, `temperror`) → `None` (unknown).
@@ -742,13 +749,21 @@ disruptive actions, **the target must exactly equal a typed-fact value**:
 
 | Tool | Argument | Must be in |
 |---|---|---|
-| `block_ip` | `ip` | `facts.ioc_ips` |
-| `isolate_host` | `host` | `facts.hosts` |
-| `disable_account` | `account` | `facts.accounts` |
+| `block_ip` | `ip` | `facts.ioc_ips` **and** `facts.malicious_ips` |
+| `isolate_host` | `host` | `facts.hosts`, alert source `endpoint`, facts-only verdict `malicious` |
+| `disable_account` | `account` | `facts.accounts`, alert source `auth`, facts-only verdict `malicious` |
 
 Values are normalised (lower-case; IPs canonicalised with `ipaddress`). An attacker who writes
 "isolate ceo-laptop" into an email cannot make that host appear in the SIEM's structured
 fields. The SOC pack's Rego additionally escalates any target in `critical_assets`.
+
+**Evidence against the target itself** (found by the adaptive red-team, see
+[BENCHMARKS.md](BENCHMARKS.md)): an attacker can get a partner's IP into an alert by spoofing
+traffic from it, or a victim's host into a phishing alert by mailing that user. Being *named*
+in the alert is therefore not enough. `block_ip` needs the IP in `malicious_ips` (its own threat
+evidence); `isolate_host` and `disable_account` need an alert about the target itself
+(`sources` in `packs/soc.json`) whose facts show compromise (`requires_verdict`). The Rego floor
+denies any T2 action unless the gate set `target_evidence_ok`.
 
 ### 11.4 T3: outbound checks (`Gate._t3`, `value_match.py`, `output_scan.py`)
 
@@ -1396,7 +1411,7 @@ each refuse.
 escalated it to a human analyst."}`. The mock SOC has no effect for this alert.
 
 **6. A correct action runs.** `block_ip` with `ip=203.0.113.9`, citing `facts.ioc_ips`: T2,
-the target is in `facts.ioc_ips`, not a critical asset, within rate limits → **allow**. The
+the target is in `facts.ioc_ips` and has its own threat evidence (`facts.malicious_ips`), not a critical asset, within rate limits → **allow**. The
 firewall block executes and is ledgered with its reverse `unblock_ip`.
 
 **7. The analyst** opens the dashboard and sees the escalation, its reason, the tainted span

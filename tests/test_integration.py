@@ -69,7 +69,7 @@ def _ingest(store, splitter, raw_alert):
 def test_demo_flow_close_escalates_block_executes(wired):
     proxy, splitter, store, mock = wired
     raw = {"alert_id": "E-DEMO", "source": "email", "severity": "high",
-           "observed": {"ioc_ips": ["203.0.113.9"]},
+           "observed": {"ioc_ips": ["203.0.113.9"], "malicious_ips": ["203.0.113.9"]},
            "enrichment": {"url_reputation": "malicious", "sender_domain_age_days": 3},
            "email": {"raw_b64": base64.b64encode(POISONED).decode(), "envelope": {}}}
     alert = _ingest(store, splitter, raw)

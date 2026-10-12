@@ -121,8 +121,8 @@ The 24 silent-failure fixes from the project dossier (section 11) carry over unc
 |---|---|---|
 | T0 | `get_alert`, `query_logs`, `lookup_ioc`, `add_note`, `escalate`, `raise_severity`, `enrich` | Rate limit; floods become an IOC |
 | T1 | `close_alert`, `downgrade_severity`, `whitelist_indicator`, `suppress_rule` | Facts-only re-check agrees, cites typed facts, evidence floor met (core facts known, no failed lookup, a fact the attacker cannot buy), bounded expiry for suppressions and allowlist entries, per-sender campaign limit, OPA allows |
-| T2 | `block_ip`, `isolate_host`, `disable_account` | Target is in the typed facts, not a critical asset, rate limit |
-| T3 | `send_email`, `post_webhook` | Recipient or URL on the allowlist, no raw evidence, output scan |
+| T2 | `block_ip`, `isolate_host`, `disable_account` | Target is in the typed facts *and* has evidence of its own (malicious IP; endpoint/auth alert showing compromise), not a critical asset, rate limit |
+| T3 | `send_email`, `post_webhook` | Recipient or URL on the allowlist, no raw evidence, output scan, no secret from the alert even transformed or split across messages |
 
 ### v2.1: silent failures fixed in TrustGate itself
 

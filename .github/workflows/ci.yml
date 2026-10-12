@@ -55,6 +55,11 @@ jobs:
       - name: Re-check guard (false-benign rate on attacker-affordable facts)
         run: python -m eval.recheck_bench --check
 
+      - name: AgentDojo guard (banking suite, hijacked agent; full run in docs/BENCHMARKS.md)
+        run: |
+          pip install ".[bench]"
+          python -m eval.agentdojo_bench --suites banking --check --out /tmp/agentdojo.json
+
   deploy:
     runs-on: ubuntu-latest
     steps:
