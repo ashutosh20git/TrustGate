@@ -19,7 +19,7 @@ from trustgate.analysts import AnalystDirectory, token_hash
 from trustgate.gate import ApprovalExecutionFailed
 from trustgate.models import Alert, Evidence, ProposedAction, TypedFacts
 
-KNOWN_SENDER = dict(dmarc_pass=True, url_reputation="clean", sender_prior_messages=12)
+KNOWN_SENDER = dict(dmarc_pass=True, url_reputation="clean", sender_prior_messages=12, reply_to_mismatch=False, sender_first_link=False, sender_new_sending_ip=False)
 TOKENS = {"ana": "tok-ana", "bo": "tok-bo"}
 
 

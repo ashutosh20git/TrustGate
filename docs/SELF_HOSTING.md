@@ -197,7 +197,13 @@ service (Compose).
 5. **Watch the rollout report** (dashboard Metrics tab, `GET /v1/rollout`). When a
    tool shows enough decisions, no fail-closed errors and would-block reasons you
    agree with, switch to `enforce`.
-6. **Ship the audit trail** to your SIEM (`TRUSTGATE_SIEM_JSONL` or Splunk HEC).
+6. **Ship the audit trail** to your SIEM (`TRUSTGATE_SIEM_JSONL` or Splunk HEC). The
+   hash chain alone cannot show that its newest records were deleted or that the whole
+   chain was rewritten; the SIEM's copy can (`Store.verify_audit_export`, and AU-9 in
+   `GET /v1/compliance/nist-800-53`).
+7. **Send the sender behaviour signals** with every email alert: `sender_first_link` and
+   `sender_new_sending_ip` (yes or no) from the mail gateway or SIEM. Without them, sender
+   history does not count and every email close goes to a human.
 
 ## Operations
 

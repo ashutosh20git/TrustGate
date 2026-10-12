@@ -1,4 +1,4 @@
-"""Threat-intel enrichment: httpx + tenacity retries + diskcache.
+"""Threat-intel enrichment: httpx + tenacity retries + a JSON-only SQLite cache.
 
 Only scores and enums leave this module. Feed descriptions are attacker-
 writable (silent failure 15) and are never read. A missing API key is a
@@ -10,6 +10,11 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import json
+import os
+import sqlite3
+import threading
+import time
 from dataclasses import dataclass, field
 
 import httpx
@@ -60,15 +65,55 @@ def _stats_to_verdict(stats: dict) -> str:
     return "clean"
 
 
+class JsonCache:
+    """Lookup cache in SQLite that stores JSON only.
+
+    It replaced diskcache, which unpickles stored values (CVE-2025-69872): anyone able to
+    write the cache file could run code in TrustGate. A row that is not valid JSON is a miss.
+    """
+
+    def __init__(self, directory: str):
+        os.makedirs(directory, exist_ok=True)
+        self._db = sqlite3.connect(os.path.join(directory, "ti.sqlite3"), check_same_thread=False)
+        self._lock = threading.Lock()
+        with self._lock:
+            self._db.execute("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value TEXT, expires REAL)")
+            self._db.commit()
+
+    def _get(self, key: str):
+        with self._lock:
+            row = self._db.execute("SELECT value, expires FROM cache WHERE key = ?", (key,)).fetchone()
+        if row is None or not isinstance(row[0], str) or (row[1] is not None and row[1] < time.time()):
+            return _MISS
+        try:
+            return json.loads(row[0])
+        except ValueError:
+            return _MISS
+
+    def __contains__(self, key: str) -> bool:
+        return self._get(key) is not _MISS
+
+    def __getitem__(self, key: str):
+        value = self._get(key)
+        if value is _MISS:
+            raise KeyError(key)
+        return value
+
+    def set(self, key: str, value, expire: float | None = None) -> None:
+        expires = time.time() + expire if expire else None
+        with self._lock:
+            self._db.execute("INSERT OR REPLACE INTO cache VALUES (?, ?, ?)", (key, json.dumps(value), expires))
+            self._db.commit()
+
+
+_MISS = object()
+
+
 class ThreatIntel:
     def __init__(self, settings: Settings, *, client: httpx.Client | None = None, cache=None):
         self.s = settings
         self._client = client or httpx.Client(timeout=10)
-        if cache is None:
-            import diskcache
-
-            cache = diskcache.Cache(settings.ti_cache_dir)
-        self._cache = cache
+        self._cache = cache if cache is not None else JsonCache(settings.ti_cache_dir)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4),
            retry=retry_if_exception_type((httpx.TransportError, httpx.HTTPStatusError)), reraise=True)

@@ -33,7 +33,7 @@ def test_close_benign_on_malicious_facts_escalates(gate, store):
 @requires_opa
 def test_close_benign_on_benign_facts_needs_typed_fact_citation(gate, store):
     alert = Alert(alert_id="A-2", source="email", severity="low",
-                  facts=TypedFacts(dmarc_pass=True, url_reputation="clean", sender_prior_messages=12),
+                  facts=TypedFacts(dmarc_pass=True, url_reputation="clean", sender_prior_messages=12, reply_to_mismatch=False, sender_first_link=False, sender_new_sending_ip=False),
                   evidence=[Evidence(id="ev-1", field="email.body", content="hello")])
     store.put_alert(alert)
     # Cites only untrusted evidence, no typed fact -> escalate.
@@ -50,7 +50,7 @@ def test_close_benign_on_benign_facts_needs_typed_fact_citation(gate, store):
 @requires_opa
 def test_ai_evasion_tag_blocks_t1(gate, store):
     alert = Alert(alert_id="A-3", source="email", severity="low",
-                  facts=TypedFacts(dmarc_pass=True, url_reputation="clean", sender_prior_messages=12),
+                  facts=TypedFacts(dmarc_pass=True, url_reputation="clean", sender_prior_messages=12, reply_to_mismatch=False, sender_first_link=False, sender_new_sending_ip=False),
                   evidence=[Evidence(id="ev-1", field="email.body", content="x")],
                   tags=["AI-evasion attempt"])
     store.put_alert(alert)

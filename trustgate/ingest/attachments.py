@@ -76,7 +76,7 @@ def detect_kind(data: bytes) -> str:
     if data[:4] == b"PK\x03\x04":
         try:
             names = zipfile.ZipFile(io.BytesIO(data)).namelist()
-        except zipfile.BadZipFile:
+        except Exception:  # BadZipFile, and NotImplementedError for a forged "zip version" (fuzzing)
             return "zip_corrupt"
         if "[Content_Types].xml" in names:
             for prefix, kind in (("word/", "docx"), ("xl/", "xlsx"), ("ppt/", "pptx")):
@@ -92,8 +92,11 @@ def detect_kind(data: bytes) -> str:
 
 
 def parse_attachment(index: int, filename: str, data: bytes) -> AttachmentResult:
-    result = AttachmentResult(index=index, filename=filename or "", sha256=hashlib.sha256(data).hexdigest(),
-                              kind=detect_kind(data))
+    try:
+        kind = detect_kind(data)
+    except Exception:  # noqa: BLE001 - nothing about an attachment may stop the email being ingested
+        kind = "unknown"
+    result = AttachmentResult(index=index, filename=filename or "", sha256=hashlib.sha256(data).hexdigest(), kind=kind)
     ext = os.path.splitext((filename or "").lower())[1]
     if ext in EXTENSION_KIND and EXTENSION_KIND[ext] != result.kind:
         result.flags.append("type_mismatch")

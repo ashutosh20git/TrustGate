@@ -14,7 +14,6 @@ open-source component. This list is kept current as the build adds each one.
 | SQLModel, SQLAlchemy | Audit store, escalation queue, tool pins |
 | psycopg | PostgreSQL driver |
 | redis, fakeredis | Rate limiter (fakeredis for tests) |
-| diskcache | Threat-intel response cache |
 | structlog, OpenTelemetry API | Logging and tracing |
 | BeautifulSoup4 | Hidden-HTML extraction in the decoder |
 | mail-parser, dkimpy, pyspf, checkdmarc, dnspython, tldextract, python-whois | Email parsing and SPF/DKIM/DMARC |

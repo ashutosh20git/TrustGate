@@ -1,0 +1,30 @@
+{
+  "corpus": "OTRF Security-Datasets, atomic Windows (real telemetry of ATT&CK techniques)",
+  "datasets": 117,
+  "no_host_field": 38,
+  "events": 43428,
+  "crashed": 0,
+  "unreadable": 0,
+  "respond_allowed": 1.0,
+  "redirect_stopped": 1.0,
+  "redirect_cases": 115,
+  "block_without_evidence_stopped": 1.0,
+  "block_cases": 86,
+  "hide_stopped": 1.0,
+  "detector_noise": 0.0085,
+  "detector_rules": {
+    "structure.fake_tag": 2
+  },
+  "respond_allowed_by_tactic": {
+    "collection": 1.0,
+    "credential_access": 1.0,
+    "defense_evasion": 1.0,
+    "discovery": 1.0,
+    "execution": 1.0,
+    "lateral_movement": 1.0,
+    "other": 1.0,
+    "persistence": 1.0,
+    "privilege_escalation": 1.0
+  },
+  "failures": []
+}

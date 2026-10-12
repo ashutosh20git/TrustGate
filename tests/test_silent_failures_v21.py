@@ -34,7 +34,7 @@ from trustgate.models import Alert, Evidence, IOCSignal, ProposedAction, TypedFa
 from trustgate.ratelimit import MemoryRateLimiter
 from trustgate.store import Escalation
 
-KNOWN_SENDER = dict(dmarc_pass=True, url_reputation="clean", sender_prior_messages=12)
+KNOWN_SENDER = dict(dmarc_pass=True, url_reputation="clean", sender_prior_messages=12, reply_to_mismatch=False, sender_first_link=False, sender_new_sending_ip=False)
 
 
 def _put(store, alert_id="A-1", source="email", severity="low", tags=None, signals=None, **facts):
@@ -82,7 +82,7 @@ def test_failed_enrichment_blocks_t1(gate, store):
 
 @requires_opa
 def test_unknown_core_fact_blocks_t1(gate, store):
-    _put(store, url_reputation="clean", sender_prior_messages=12)  # dmarc unknown
+    _put(store, url_reputation="clean", sender_prior_messages=12, reply_to_mismatch=False, sender_first_link=False, sender_new_sending_ip=False)  # dmarc unknown
     d = _close(gate)
     assert d.recheck_verdict == "benign"
     assert d.decision == "escalate"

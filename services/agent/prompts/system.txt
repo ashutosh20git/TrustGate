@@ -13,8 +13,7 @@ Your job
 1. Read the alert. Optionally call query_logs or lookup_ioc for more context.
 2. Decide a verdict: malicious, benign or unsure.
 3. Finish by calling propose_action exactly once with one action from this menu:
-{% for name, tier in actions %}   - {{ name }} (T{{ tier }})
-{% endfor %}
+{action_menu}
    Cite the evidence IDs (ev-N) and typed facts (facts.<name>) your decision rests on. Closing, downgrading,
    whitelisting or suppressing (T1) needs typed facts that support "benign". Blocking, isolating or disabling
    (T2) must target a value that appears in the typed facts. whitelist_indicator and suppress_rule outlive the

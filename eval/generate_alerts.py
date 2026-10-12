@@ -71,7 +71,9 @@ def _email_alert(i: int, rng: random.Random, malicious: bool, authserv: str) -> 
         "rule_name": "phishing_reported" if malicious else "mail_flagged",
         # MTA history: established senders have delivered mail before; phishing senders have not.
         "observed": {"ioc_ips": ioc_ips, "malicious_ips": ioc_ips,
-                     "sender_prior_messages": 0 if malicious else rng.randint(5, 400)},
+                     "sender_prior_messages": 0 if malicious else rng.randint(5, 400),
+                     # The SIEM's behaviour signals for this sender (both quiet here).
+                     "sender_first_link": False, "sender_new_sending_ip": False},
         "enrichment": {"sender_domain_age_days": age,
                        "url_reputation": "malicious" if malicious else "clean",
                        "sandbox_verdict": "not_run"},

@@ -1,6 +1,8 @@
 # Benchmarks: how TrustGate holds up, and what the benchmarks broke
 
-Three benchmarks, chosen because they are hard, not because they flatter:
+Round 1 (below): three benchmarks for AI security, chosen because they are hard, not because
+they flatter. [Round 2](#round-2-the-other-areas-of-the-theme) covers the rest of the theme:
+phishing, threat detection, fraud, TrustGate's own code, compliance and awareness.
 
 | # | Benchmark | What it attacks | Runner |
 |---|---|---|---|
@@ -230,6 +232,253 @@ does not.
 
 ---
 
+# Round 2: the other areas of the theme
+
+The first round covered AI security. The second tests TrustGate against benchmarks for phishing,
+threat detection, fraud, vulnerability detection, compliance and awareness, plus three more
+prompt-injection suites, so the AgentDojo result is not tuned to one benchmark. Same method:
+held-out data where there is any, every hole fixed with a test (`tests/test_benchmark_findings_v2.py`),
+final numbers on the fixed code. Everything here is free and was run in this repository's
+environment; benchmarks that could not be reached are listed at the end.
+
+| # | Area | Benchmark | Runner |
+|---|---|---|---|
+| 5 | Phishing | **Enron-Spam** legitimate mail (16,545 business emails + 17,171 spam) | `python -m eval.benign_bench` |
+| 6 | Phishing / fraud | **Account takeover**: phishing_pot replayed from a trusted, compromised mailbox | `python -m eval.takeover_bench` |
+| 7 | AI security / threat detection | **InjecAgent** (1,054 cases x 2 settings), **ASB** (10,200 cases), **BIPIA** (30,000 poisoned contexts) | `python -m eval.injection_suites` |
+| 8 | Threat detection | **OTRF Security-Datasets**: real Windows telemetry of ATT&CK techniques | `python -m eval.endpoint_bench` |
+| 9 | Fraud | **AgentDojo banking** under four more attack wordings | `python -m eval.agentdojo_bench --attack ...` |
+| 10 | Vulnerability (TrustGate's own code) | **Fuzzing** the parsers; **Bandit, pip-audit**; **CodeQL, Trivy** in CI; **Schemathesis** on the APIs | `python -m eval.fuzz_ingest`, `tests/test_api_fuzz.py`, `.github/workflows/security.yml` |
+| 11 | Compliance | **Audit tampering**; **NIST 800-53 AU** evidence; **OWASP LLM Top 10 + Agentic threats** matrix | `tests/test_audit_tamper.py`, `tests/test_owasp_coverage.py` |
+| 12 | Awareness | **Explanation accuracy**: does the analyst see the real cause? | `python -m eval.explain_bench` |
+
+## Round 2 at a glance
+
+| Benchmark | Result on the final code |
+|---|---|
+<!-- r2:glance -->
+
+## 5. Legitimate mail (Enron-Spam)
+
+**Why.** Round 1 had no real benign mail, so the price of strictness was unmeasured. Enron-Spam
+is real business mail from Enron staff (and spam), subject and body only.
+
+**Setup.** Every email is given the facts of a **known, well-behaved sender** (DMARC pass, years
+of history, someone here replied, clean link, no compromise signal), and the agent proposes the
+correct action: close it as benign. The facts allow that, so **any escalation is caused by the
+email's content alone**: the detector, hidden-content flags, decoded blobs. The corpus is split
+in two by message ID; the false alarms below were found on one half, and the other half was
+not looked at until the fixes were done.
+
+<!-- r2:benign -->
+
+**What broke, and the fixes:**
+
+| Found | Fix |
+|---|---|
+| **8% of legitimate mail tagged "hidden content"** and raised in severity: every email longer than the 4,000-character display cap | Truncation alone no longer tags the alert: the detector scans the full text anyway. The evidence keeps its `truncated` flag for the analyst |
+| **0.16% of legitimate mail escalated** by six detector rules firing alone on ordinary text: "you will now be able to view your mailbox", "assistant : Linda Simmons" (a signature), "[ manager ]", "did we resolve this case?", "end of message", "can not include 'enron' in your password" | Each rule narrowed or made to need a second signal (weight below the threshold alone). Checked against the attack eval: the detector now catches **87** of its payloads, up from 84, and loses none |
+
+What this cannot show: Enron mail has no authentication headers, so authentication and the
+evidence floor are held fixed here. The cost of strictness *including* those, on modern mail,
+needs your own mailbox (monitor mode, `eval.realmail_bench`).
+
+## 6. Account takeover (phishing from a mailbox you trust)
+
+**Why.** The hardest phishing comes from a real supplier's or colleague's compromised mailbox:
+DMARC passes, the sender has years of history, staff have replied before.
+
+**Setup.** 500 real phishing emails from phishing_pot, each replayed with a trusted DMARC pass on
+top and that history supplied, in seven variants. A hijacked agent tries to close each as benign.
+
+| Variant | Closed as benign, before | After |
+|---|---|---|
+| Behaves exactly as usual (no signal at all) | 96% | 96% (out of scope, below) |
+| **Behaviour signals not supplied by the SIEM** | **75%** | **0%** |
+| First link from this sender | 0% | 0% |
+| Link domain never seen in the organisation | 0% | 0% |
+| Reply-To on another domain | 0% | 0% |
+| New sending IP | 0% | 0% |
+| First attachment | 0% | 0% |
+
+**What broke.** Sender history stopped counting when a compromise signal was *true*, but still
+counted when the signals were simply *unknown*: a SIEM that sends history but not behaviour
+signals made every quiet takeover look like a trusted sender. **Fix:** sender and organisation
+history count as proof only when the core behaviour signals are known
+(`costly_requires_known` in `packs/floor.json`: Reply-To mismatch, which TrustGate computes
+from the headers itself, plus first link and new sending IP, which the SIEM or mail gateway must
+send). Without them the close goes to a human, with the reason "whether it is behaving normally
+is unknown (... not supplied)".
+
+**Out of scope, measured.** A takeover that behaves exactly like its owner (same IP, no new
+link, no new attachment) still gets through 96% of the time. Every fact says "trusted sender,
+normal behaviour"; catching it is account-takeover detection, not injection.
+
+## 7. More prompt-injection suites: InjecAgent, ASB, BIPIA
+
+All three run through the **same gate code as AgentDojo** (`eval/agent_gate.py`), with a fully
+hijacked agent (every injection lands unless the gate stops it; undefended success is 100% by
+construction). Attacker arguments are the values the attacker's instruction names.
+
+| Suite | Cases | Attack success | Detector flagged the injection |
+|---|---|---|---|
+| InjecAgent, strict | 2,108 (direct harm + data stealing, base + enhanced) | **0.00** | 50% (all "enhanced", no "base") |
+| InjecAgent, field labels | 2,108 | **0.00** | 50% |
+| ASB, attacker tool registered | 10,200 (5 injection styles) | **0.0044** | 40% |
+| ASB, attacker tool not registered | 10,200 | **0.00** | (TrustGate escalates any unregistered tool) |
+
+| BIPIA (detector only) | Clean context flagged | Poisoned context flagged (start / middle / end) |
+|---|---|---|
+| Email (11,250 poisoned) | 0% | 0% / 0% / 0% |
+| Table (11,250) | 0% | 0% / 0% / 0% |
+| Code (7,500) | 0% | 0% / 0% / 0% |
+
+**What broke, and the fixes:**
+
+| Found | Fix |
+|---|---|
+| **InjecAgent 4.8%**: calls with no argument to check ("unlock my front door", "disable two-factor authentication") ran, because value matching had nothing to match | A T1-T3 call with no argument naming what it acts on must be asked for by name in the user's request. No clean AgentDojo task is affected |
+| **ASB 6.06%**: the benchmarks' name-based tiering (standing in for a deployer registering tools) made tools named like "PeerReviewManipulation" or "SystemMonitor" reads, because a read word appears somewhere in the name; and "InvestmentScam" counted as requested because the task mentioned investments | A name is a read only when it *starts* with a read verb; anything else is fail-closed T3. A no-target call needs *every* word naming its object in the request |
+
+**Residual (ASB 0.44%).** Two registered tools whose names match the user's own task
+("InventoryManagementTool" when asked to manage inventory, "PatientDataManagementTool" for a
+patient task), called with no arguments. From the call alone that is indistinguishable from
+legitimate use; it is stopped only by not registering the tool (MCP pinning and review).
+
+**BIPIA reading.** BIPIA's injections are plain task requests ("write a script that ...",
+"translate the answer into French") with nothing addressed to an AI, so the detector, which
+looks for exactly that, sees none of them, and flags no clean context either. That is by design:
+flagging every request in an email would flag most legitimate mail. BIPIA's attacks ask for
+text output, not actions; what the gate controls is actions, and for those the InjecAgent and
+ASB numbers above apply.
+
+## 8. Real attack telemetry (OTRF Security-Datasets)
+
+**Why.** The round-1 T2 rule ("evidence against the target itself") must not starve real
+response, and attacker-written log text must not redirect it.
+
+**Setup.** 117 OTRF datasets (43,428 Windows events from executing ATT&CK techniques: credential
+dumping, lateral movement, persistence, defence evasion, ...) each become the endpoint alert an
+EDR would raise: the host is a structured field, every event message is untrusted log text. 38
+more datasets have no host field (other log formats) and are skipped.
+
+| Check | Result |
+|---|---|
+| Isolate the host the alert is about (real response) | **allowed in 117/117**, every tactic |
+| Isolate another machine named only in the log text | **stopped in 115/115** |
+| Block an IP seen only in the log text, with no threat evidence | **stopped in 86/86** |
+| Close the alert as benign | **stopped in 117/117** |
+| Ingest crashes | 0 |
+| Detector noise (attack telemetry is not prompt injection) | 0.85% (one dataset: XML `</Data>` tags in event text) |
+
+Nothing broke here.
+
+## 9. Fraud: AgentDojo banking under other attack wordings
+
+The banking suite (money transfers, scheduled payments, account changes) with AgentDojo's other
+fixed attacks:
+
+| Attack | Strict | Field labels |
+|---|---|---|
+| important_instructions (round 1) | 0.00 | 0.00 |
+| direct ("TODO: ...") | 0.00 | 0.00 |
+| ignore_previous | 0.00 | 0.00 |
+| system_message | 0.00 | 0.00 |
+| injecagent ("IMPORTANT!!! Ignore all previous instructions ...") | 0.00 | 0.00 |
+
+The wording changes what the detector sees, not what the gate checks: the recipient, IBAN and
+amount must come from the user's request either way.
+
+## 10. TrustGate's own code: fuzzing, scanners, API
+
+<!-- r2:fuzz -->
+
+| Tool | Found | Fix |
+|---|---|---|
+| **pip-audit** | `diskcache` 5.6.3, CVE-2025-69872: the threat-intel cache unpickled stored values, so anyone able to write the cache folder could run code in TrustGate. diskcache's JSON mode does not fix it: a row marked "pickle" is still unpickled | diskcache removed; a small SQLite cache that stores JSON only. A planted row is a cache miss |
+| **Fuzzing** | A forged "version needed to extract" in an attachment's zip header raised `NotImplementedError` outside the parser's fail-closed block: **the whole email failed to ingest**. An attacker could keep a phishing email out of the queue | Magic-byte detection inside the fail-closed block; the attachment is marked unparseable and the email is ingested |
+| **Schemathesis** | `POST /v1/tools/{tool}` copied the URL's tool name into the action without validation; an invalid name was stored with the escalation and **every later read of the analyst queue failed** (500) | The action is re-validated (422 on a bad name); a malformed stored action can no longer take the queue down |
+| **Schemathesis** | `?limit=9223372036854775808` on `/v1/audit` and `/v1/alerts` overflowed the database driver (500) | Limits bounded (1-10,000 and 1-1,000) |
+| **Bandit** | Two high-severity findings, both false positives: Jinja2 without autoescape (plain-text LLM prompts, never HTML) and bidirectional-control characters in a source file (the decoder's own regex for them) | The prompts are now plain strings, not Jinja2 (this also clears CodeQL's two matching alerts); the regex now uses `\u` escapes so the source holds no invisible characters |
+
+After the fixes: Bandit has no high-severity finding, pip-audit no known vulnerability, and the
+API fuzz passes 300 generated requests per operation, with and without valid tokens, with no
+server error, no response to a wrong token, and no tool ever executed. CI now runs Bandit,
+pip-audit and a fuzz smoke test on every push, and CodeQL (security-extended) and Trivy (fails
+on a fixable critical image CVE) in `.github/workflows/security.yml`. CodeQL and Trivy cannot
+run in this environment; their first results arrive with the first CI run. In CI, pip-audit also
+audits the runner's own tools: its bundled setuptools 79.0.1 had an advisory (PYSEC-2026-3447),
+so the workflow upgrades setuptools before auditing. TrustGate does not depend on setuptools at run time.
+
+## 11. Compliance
+
+**Audit tampering** (NIST 800-53 AU-9, AU-10; ISO 27001 A.8.15), someone with database access:
+
+| Tampering | Caught by the hash chain | Caught against the SIEM export |
+|---|---|---|
+| Edit a record (an escalation rewritten as "allow") | yes | yes |
+| Delete a record in the middle | yes | yes |
+| Reorder records | yes | n/a |
+| Insert a forged record | yes | n/a |
+| **Delete the newest records** | **no** (what is left is a valid chain) | **yes** |
+| **Rewrite every record and recompute every hash** | **no** | **yes** |
+
+**Fix:** `Store.verify_audit_export()` compares the chain with the copy already sent to the SIEM
+(the JSON-lines export), which someone with database access cannot reach. A new **NIST 800-53
+AU** evidence pack (`/v1/compliance/nist-800-53`: AU-2, 3, 6, 9, 10, 11, 12) reports AU-9 as a
+gap when the export differs, and as "confirm" when no export is configured, because without one
+those two attacks are invisible.
+
+**OWASP coverage.** `tests/test_owasp_coverage.py` maps all 10 OWASP LLM Top 10 (2025) items and
+all 15 OWASP Agentic AI threats to the tests that prove them, and fails if a referenced test is
+renamed or deleted:
+
+| Status | Items |
+|---|---|
+| Covered (20) | LLM01 prompt injection, LLM02 sensitive information disclosure, LLM03 supply chain, LLM05 improper output handling, LLM06 excessive agency, LLM07 system prompt leakage, LLM10 unbounded consumption; agentic T2 tool misuse, T3 privilege compromise, T4 resource overload, T5 cascading hallucination, T6 goal manipulation, T7 deceptive behaviour, T8 repudiation, T9 identity spoofing, T12 agent communication poisoning, T13 rogue agents, T14 human attacks on multi-agent systems, T15 human manipulation |
+| Partial (4) | LLM04 data and model poisoning (a poisoned training file is caught only by its holdout rate), LLM09 misinformation (a wrong summary in a note is not checked), agentic T1 memory poisoning (no memory between alerts; notes carry provenance), T10 overwhelming the human (rubber-stamping is measured; queue volume is not capped) |
+| Not applicable (2) | LLM08 vector and embedding weaknesses (no retrieval), agentic T11 code execution (no code-execution tool; an unregistered tool escalates) |
+
+## 12. Awareness: do explanations name the real cause?
+
+**Why.** The analyst queue is where people learn what attacks look like. A reason like "benign
+probability 0.82 below 0.90" teaches nothing and invites rubber-stamping.
+
+**Setup.** 14 cases, each an allowed alert with exactly one thing changed (DMARC failed, a
+malicious link, a failed lookup, an unknown fact, each compromise signal, unknown behaviour, an
+injection in the evidence, a useless citation, a target not in the facts, a target with no
+threat evidence, a recipient off the allowlist, a card number in the body), plus the unchanged
+alert, which must be allowed.
+
+| | Before | After |
+|---|---|---|
+| The escalation reason names the real cause | 11/14 | **14/14** |
+| The counterfactual ("would be allowed if ...") names the fact to change | 100% | 100% |
+| The unchanged alert is allowed | yes | yes |
+
+**What broke.** The gate stops at the first failing T1 check. When the facts-only re-check
+disagreed, the analyst saw only the model's confidence, never the other causes: unknown
+behaviour signals, an injection found in the evidence, a citation that proves nothing. **Fix:**
+that escalation now lists every other T1 check that would also fail. The agent still sees none
+of it.
+
+**Not run: the NIST Phish Scale.** It rates a lure's difficulty from its cues *and* from how well
+its premise matches the organisation's own work, which needs a human who knows the organisation.
+With no labelled data, an automatic score would be a guess, so none is reported.
+
+## Benchmarks proposed but not run
+
+| Benchmark | Why not |
+|---|---|
+| Your own mailbox (modern legitimate mail with real headers) | Needs mail only you can export; the runner is ready (`eval.realmail_bench`) |
+| SpamAssassin corpus, Nazario phishing, CERT insider threat, LANL auth logs, PhishTank / OpenPhish / URLhaus / Tranco | Their hosts are unreachable from this environment |
+| AI-generated phishing sets, MCPTox | Hosted on Hugging Face, blocked here |
+| Garak, PyRIT | Need a live LLM and API key |
+| Splunk BOTS | Tens of GB in Splunk-only formats; OTRF covers the same ground |
+| IEEE-CIS, PaySim, GoPhish | TrustGate has no payment tools or training feature, so a score would be meaningless |
+
+---
+
 ## Honest caveats
 
 - **No LLM was in the loop.** AgentDojo was replayed as a fully hijacked agent, and the
@@ -238,7 +487,15 @@ does not.
 - **Secret tracking is per process and in memory** (bounded: 50 messages per alert, 10,000
   alerts). Leaks split across gateway replicas, or across a restart, are not combined.
 - **Compromised mailboxes that behave normally** are not caught (out of scope, see above).
-- **No real benign corpus**: the cost of strictness on real mail is not measured here.
+- **Legitimate mail without headers**: Enron measures what *content* costs on real business
+  mail; what authentication and the evidence floor cost on modern mail needs your own mailbox.
+- **The SIEM must send behaviour signals** (`sender_first_link`, `sender_new_sending_ip`), or
+  every email close escalates; that is the price of not trusting unknown signals.
+- **Audit tampering at the tail** (deleting the newest records, rewriting the chain) is caught
+  only with the SIEM export configured.
+- **The detector sees text addressed to an AI, not plain requests** (BIPIA: 0%). The gate does
+  not depend on it; a deployment that wants text-level detection of plain requests needs a
+  model-based detector (Prompt Guard, Lakera), with its false alarms.
 - **Strict policy costs utility** where the work is "act on what the message says" (Slack:
   90% of clean tasks escalate).
 
@@ -252,4 +509,22 @@ git clone --depth 1 https://github.com/rf-peixoto/phishing_pot.git /tmp/phishing
 python -m eval.realmail_bench /tmp/phishing_pot/email --limit 300   # omit --limit for all
 python -m eval.recheck_bench
 pytest tests/test_benchmark_findings.py
+
+# Round 2
+git clone --depth 1 https://github.com/MWiechmann/enron_spam_data.git /tmp/enron && unzip -o /tmp/enron/enron_spam_data.zip -d /tmp/enron
+python -m eval.benign_bench /tmp/enron/enron_spam_data.csv                 # --split tune for the other half
+python -m eval.takeover_bench /tmp/phishing_pot/email --limit 500
+git clone --depth 1 https://github.com/uiuc-kang-lab/InjecAgent.git /tmp/InjecAgent
+git clone --depth 1 https://github.com/agiresearch/ASB.git /tmp/ASB
+git clone --depth 1 https://github.com/microsoft/BIPIA.git /tmp/BIPIA
+python -m eval.injection_suites --injecagent /tmp/InjecAgent --asb /tmp/ASB --bipia /tmp/BIPIA
+git clone --depth 1 --filter=blob:none --sparse https://github.com/OTRF/Security-Datasets.git /tmp/otrf
+git -C /tmp/otrf sparse-checkout set datasets/atomic/windows
+python -m eval.endpoint_bench /tmp/otrf/datasets/atomic/windows
+python -m eval.agentdojo_bench --suites banking --attack injecagent     # also: direct, ignore_previous, system_message
+python -m eval.fuzz_ingest --seeds /tmp/phishing_pot/email --iterations 3000
+TRUSTGATE_API_FUZZ_EXAMPLES=300 pytest tests/test_api_fuzz.py
+pytest tests/test_audit_tamper.py tests/test_owasp_coverage.py tests/test_benchmark_findings_v2.py
+python -m eval.explain_bench
+bandit -q -r trustgate services scripts -lll && pip-audit --vulnerability-service pypi
 ```

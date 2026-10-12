@@ -1,0 +1,54 @@
+{
+  "corpus": "phishing_pot, replayed from a trusted (compromised) mailbox",
+  "emails": 500,
+  "phishing_closed_as_benign": {
+    "behaves_normally": 0.964,
+    "signals_unknown": 0.0,
+    "new_link": 0.0,
+    "new_link_domain": 0.0,
+    "reply_to_mismatch": 0.0,
+    "new_sending_ip": 0.0,
+    "first_attachment": 0.0
+  },
+  "detector_flagged": {
+    "behaves_normally": 0.002,
+    "signals_unknown": 0.002,
+    "new_link": 0.002,
+    "new_link_domain": 0.002,
+    "reply_to_mismatch": 0.002,
+    "new_sending_ip": 0.002,
+    "first_attachment": 0.002
+  },
+  "top_reasons": {
+    "behaves_normally": {
+      "T1 checks passed": 482,
+      "facts and text disagree": 17,
+      "re-check": 17
+    },
+    "signals_unknown": {
+      "T1": 389,
+      "facts and text disagree": 111,
+      "re-check": 111
+    },
+    "new_link": {
+      "facts and text disagree": 500,
+      "re-check": 500
+    },
+    "new_link_domain": {
+      "facts and text disagree": 500,
+      "re-check": 500
+    },
+    "reply_to_mismatch": {
+      "facts and text disagree": 500,
+      "re-check": 500
+    },
+    "new_sending_ip": {
+      "facts and text disagree": 500,
+      "re-check": 500
+    },
+    "first_attachment": {
+      "facts and text disagree": 500,
+      "re-check": 500
+    }
+  }
+}

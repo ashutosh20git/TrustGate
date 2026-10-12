@@ -25,9 +25,9 @@ import random
 from collections import Counter
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from services.soc_tools import register_soc_tools, soc_tool_functions, soc_undo_functions
 from trustgate.analysts import AnalystDirectory
@@ -70,7 +70,10 @@ def _ensure_canaries(store: Store, gate: Gate, rng: random.Random) -> None:
     if not real or len(canaries) >= max(1, int(len(real) * CANARY_RATE)):
         return
     template = rng.choice(real)
-    action = ProposedAction.model_validate(template.action)
+    try:
+        action = ProposedAction.model_validate(template.action)
+    except ValidationError:
+        return  # a malformed stored action never takes the queue down
     decision = GateDecision(decision="escalate", tier=1, reasons=[
         "facts and text disagree: agent=benign, facts-only=malicious"], recheck_verdict="malicious",
         tainted_spans=template.tainted_spans)
@@ -123,7 +126,12 @@ def create_app(gate: Gate | None = None, settings: Settings | None = None,
 
     @app.post("/v1/tools/{tool}")
     async def call_tool(tool: str, action: ProposedAction) -> dict[str, Any]:
-        action = action.model_copy(update={"tool": tool})
+        # Validate, not model_copy: a copy skips the tool-name check, and an invalid name stored
+        # with an escalation broke every later read of the analyst queue (API fuzzing).
+        try:
+            action = ProposedAction.model_validate({**action.model_dump(), "tool": tool})
+        except ValidationError:
+            raise HTTPException(422, "invalid tool name") from None
         decision = await asyncio.to_thread(gate.decide, action)
         executed, result, error = False, None, None
         if decision.permits_execution:
@@ -206,14 +214,14 @@ def create_app(gate: Gate | None = None, settings: Settings | None = None,
 
     @app.get("/v1/compliance/{framework}", dependencies=[Depends(require_analyst)])
     def compliance(framework: str) -> dict[str, Any]:
-        """Evidence pack for cert-in, dpdp or iso27001 (evidence for a review, not a determination)."""
+        """Evidence pack for cert-in, dpdp, iso27001 or nist-800-53 (evidence for a review, not a determination)."""
         try:
             return compliance_report(store, framework)
         except ValueError as exc:
             raise HTTPException(404, str(exc)) from None
 
     @app.get("/v1/audit", dependencies=[Depends(require_analyst)])
-    def audit(alert_id: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
+    def audit(alert_id: str | None = None, limit: int = Query(500, ge=1, le=10_000)) -> list[dict[str, Any]]:
         return [r.model_dump(mode="json") for r in store.audit_trail(alert_id, limit=limit)]
 
     @app.get("/v1/alerts/{alert_id}", dependencies=[Depends(require_analyst)])

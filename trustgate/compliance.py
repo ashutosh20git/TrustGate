@@ -13,16 +13,19 @@ for a human. Frameworks:
             the Data Protection Board and each affected Data Principal of a breach.
 * iso27001  ISO/IEC 27001:2022 Annex A 5.24-5.28 (incident management) and
             8.15-8.16 (logging, monitoring).
+* nist-800-53  NIST SP 800-53 Rev. 5 audit and accountability family (AU-2, AU-3, AU-6,
+            AU-9, AU-10, AU-11, AU-12).
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import os
 from typing import Any
 
 from trustgate.store import Store
 
-FRAMEWORKS = ("cert-in", "dpdp", "iso27001")
+FRAMEWORKS = ("cert-in", "dpdp", "iso27001", "nist-800-53")
 DISCLAIMER = ("Evidence collected by TrustGate to support a compliance review. It is not a compliance "
               "determination; items marked 'confirm' need a human.")
 CERT_IN_REPORT_HOURS = 6
@@ -77,11 +80,18 @@ def collect(store: Store, now: dt.datetime | None = None) -> dict[str, Any]:
             incident(r.alert_id, r.ts, "attempted data exfiltration stopped")
 
     analyst = [r for r in records if r.kind == "analyst"]
+    export_path = getattr(store.settings, "siem_jsonl_path", None)
+    export_problems = (store.verify_audit_export(export_path)
+                       if export_path and os.path.exists(export_path) else None)
     return {
         "generated_at": now.isoformat(),
         "logs": {
             "records": len(records),
             "hash_chain_intact": store.verify_audit_chain(),
+            # None: no SIEM export configured, so deleted newest records or a rewritten chain
+            # cannot be detected (docs/BENCHMARKS.md, audit tampering).
+            "matches_siem_export": None if export_problems is None else not export_problems,
+            "export_problems": export_problems or [],
             "oldest": oldest.isoformat() if oldest else None,
             "newest": _utc(records[-1].ts).isoformat() if records else None,
             "days_covered": round((now - oldest).total_seconds() / 86400, 2) if oldest else 0.0,
@@ -104,7 +114,7 @@ def report(store: Store, framework: str, now: dt.datetime | None = None) -> dict
     if framework not in FRAMEWORKS:
         raise ValueError(f"framework must be one of {', '.join(FRAMEWORKS)}")
     ev = collect(store, now)
-    builder = {"cert-in": _cert_in, "dpdp": _dpdp, "iso27001": _iso27001}[framework]
+    builder = {"cert-in": _cert_in, "dpdp": _dpdp, "iso27001": _iso27001, "nist-800-53": _nist_au}[framework]
     return {"framework": framework, "disclaimer": DISCLAIMER, "controls": builder(ev), "evidence": ev}
 
 
@@ -178,6 +188,36 @@ def _iso27001(ev: dict[str, Any]) -> list[dict[str, Any]]:
         {"id": "A.8.16", "requirement": "Monitoring activities", "status": "met",
          "evidence": f"{ev['fail_closed_decisions']} fail-closed decision(s) recorded; monitor-mode rollout "
                      "report and analyst scores available."},
+    ]
+
+
+def _nist_au(ev: dict[str, Any]) -> list[dict[str, Any]]:
+    logs, human = ev["logs"], ev["human_decisions"]
+    chain, export = logs["hash_chain_intact"], logs["matches_siem_export"]
+    return [
+        {"id": "AU-2", "requirement": "Event logging: the events to log are defined and logged", "status": "met",
+         "evidence": "Every gate decision, analyst decision, rollback, MCP pin change and injected tool output "
+                     f"is an audit record ({logs['records']} records)."},
+        {"id": "AU-3", "requirement": "Content of audit records: what, when, where, source, outcome, identity",
+         "status": "met", "evidence": "Each record holds kind, UTC time, alert, tool, tier, decision, mode, "
+                                      "reasons, re-check verdict and, for analyst decisions, the analyst."},
+        {"id": "AU-6", "requirement": "Audit record review, analysis and reporting", "status": "confirm",
+         "evidence": "The dashboard's Audit tab, /v1/audit and the SIEM export support review; confirm a "
+                     "review schedule."},
+        {"id": "AU-9", "requirement": "Protection of audit information",
+         "status": "gap" if chain is False or export is False else "met" if export else "confirm",
+         "evidence": f"Hash chain {'intact' if chain else 'BROKEN'}; "
+                     + ("copy in the SIEM matches" if export else
+                        f"copy in the SIEM DIFFERS: {'; '.join(logs['export_problems'][:3])}" if export is False else
+                        "no SIEM export configured: deleting the newest records or rewriting the whole chain "
+                        "would not be detected (set TRUSTGATE_SIEM_JSONL or Splunk HEC)")},
+        {"id": "AU-10", "requirement": "Non-repudiation", "status": _status(chain),
+         "evidence": f"Analyst decisions carry the analyst's identity from their token; {human['resolved']} "
+                     f"decision(s), {human['with_second_analyst']} with a second analyst."},
+        {"id": "AU-11", "requirement": "Audit record retention", "status": "confirm",
+         "evidence": f"Records cover {logs['days_covered']} days; confirm the retention policy."},
+        {"id": "AU-12", "requirement": "Audit record generation", "status": _status(logs["records"] > 0),
+         "evidence": "Records are generated by the gate itself on every decision, not by the agent."},
     ]
 
 

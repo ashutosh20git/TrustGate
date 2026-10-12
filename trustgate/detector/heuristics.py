@@ -33,7 +33,8 @@ AI_DIRECTED_RULES: tuple[Rule, ...] = (
        r"[^.\n]{0,20}\b(instructions?|rules?|prompts?|guidelines?|directives?|context)\b"),
     _r("override.new_instructions", "override", 0.6, r"\bnew\s+(system\s+)?instructions?\b"),
     _r("override.system_prompt", "override", 0.5, r"\b(system|developer)\s+prompt\b"),
-    _r("override.you_must_now", "override", 0.5, r"\byou\s+(must|should|will|are to)\s+now\b"),
+    # Alone it is ordinary mail ("you will now be able to view your mailbox"): needs a second signal.
+    _r("override.you_must_now", "override", 0.35, r"\byou\s+(must|should|will|are to)\s+now\b"),
     # Addressing an AI
     _r("addressing.note_to_ai", "addressing_ai", 0.85,
        r"\b(note|message|instructions?|memo|attention|reminder)\s+(to|for)\s+(the\s+|any\s+)?(ai|a\.i\.|assistant|llm|"
@@ -46,8 +47,9 @@ AI_DIRECTED_RULES: tuple[Rule, ...] = (
        r"\b(should|must|please|needs?\s+to|are\s+instructed)\b"),
     # Persona hijack
     _r("persona.bracket_role", "persona", 0.8,
-       r"\[\s*(soc|security|it|system|sys)?\s*(admin(istrator)?|analyst|supervisor|lead|manager|operator|system|root)\s*\]\s*:?"),
-    _r("persona.role_prefix", "persona", 0.6, r"^\s*(system|assistant|admin|soc[_ ]?admin|administrator)\s*:"),
+       r"\[\s*(soc|security|it|system|sys)?\s*(admin(istrator)?|analyst|supervisor|lead|manager|operator|system|root)\s*\]\s*:"),
+    # "assistant : linda simmons" in a signature: alone it needs a second signal.
+    _r("persona.role_prefix", "persona", 0.35, r"^\s*(system|assistant|admin|soc[_ ]?admin|administrator)\s*:"),
     _r("persona.this_is_admin", "persona", 0.6, r"\bthis\s+is\s+(the\s+)?(soc|security|it)\s+(admin|administrator|team|lead|manager)\b"),
     # Fake verdicts and requested dispositions
     _r("verdict.field", "fake_verdict", 0.85,
@@ -57,7 +59,7 @@ AI_DIRECTED_RULES: tuple[Rule, ...] = (
        r"\b(mark|classify|label|treat|tag|flag|close|resolve)\b[^.\n]{0,30}\bas\b[^.\n]{0,10}"
        r"\b(benign|false[ _-]?positive|safe|clean|legitimate|resolved)\b"),
     _r("verdict.close_alert", "fake_verdict", 0.7,
-       r"\b(close|dismiss|suppress|resolve|ignore)\s+(this|the)\s+(alert|ticket|incident|case|detection)\b"),
+       r"\b(close|dismiss|suppress|resolve|ignore)\s+(this|the)\s+(alert|ticket|incident|detection)\b"),
     _r("verdict.authorised_test", "fake_verdict", 0.6,
        r"\bauthori[sz]ed\s+(phishing\s+|red[ -]team\s+|security\s+|penetration\s+|pen\s+)?(test|simulation|exercise|assessment)\b"),
     _r("verdict.do_not_escalate", "fake_verdict", 0.75,
@@ -67,8 +69,10 @@ AI_DIRECTED_RULES: tuple[Rule, ...] = (
     _r("structure.fake_tag", "fake_structure", 0.6,
        r"</?\s*(log|logs|end|system|context|evidence|data|document|tool_?result|function_?results?|assistant|user|"
        r"instructions?|untrusted|trusted)\s*>"),
-    _r("structure.end_marker", "fake_structure", 0.55,
-       r"(\bend\s+of\s+(log|logs|email|message|context|evidence|data|document)\b|-{3,}\s*end\s*-{3,}|={3,}\s*end\s*={3,})"),
+    _r("structure.end_marker", "fake_structure", 0.55, r"(-{3,}\s*end\s*-{3,}|={3,}\s*end\s*={3,})"),
+    # "end of message" closes many newsletters: alone it needs a second signal.
+    _r("structure.end_of_words", "fake_structure", 0.35,
+       r"\bend\s+of\s+(log|logs|email|message|context|evidence|data|document)\b"),
     _r("structure.json_tool_call", "fake_structure", 0.6,
        r"\{\s*\"(tool|tool_?call|function|function_?call|arguments|verdict|action|parameters)\"\s*:"),
     _r("structure.xml_tool_call", "fake_structure", 0.7, r"<\s*(tool_call|function_call|invoke|function_calls|tool_use|parameter)\b"),
@@ -96,7 +100,8 @@ AI_DIRECTED_RULES: tuple[Rule, ...] = (
        r"\b(logs?|credentials?|passwords?|secrets?|keys?|tokens?|api[ _-]?keys?|database|config(uration)?)\b[^.\n]{0,40}"
        r"\b(to|at)\b[^.\n]{0,10}[\w.+-]+@[\w-]+\.[\w.]+"),
     _r("exfil.include_secrets", "exfil", 0.6,
-       r"\b(include|attach|append|paste)\b[^.\n]{0,30}\b(credentials?|passwords?|secrets?|api[ _-]?keys?|tokens?|private\s+keys?)\b"),
+       r"(?<!not )(?<!n't )(?<!cannot )\b(include|attach|append|paste)\b[^.\n]{0,30}"
+       r"\b(the|your|all|any|our|their)\s+([\w-]+\s+){0,3}(credentials?|passwords?|secrets?|api[ _-]?keys?|tokens?|private\s+keys?)\b"),
 )
 
 TOOL_POISONING_RULES: tuple[Rule, ...] = (

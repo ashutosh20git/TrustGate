@@ -17,8 +17,8 @@ from dataclasses import dataclass, field
 
 from bs4 import BeautifulSoup, Comment
 
-ZERO_WIDTH = re.compile("[​-‏⁠-⁤﻿­᠎͏]")
-BIDI_CONTROLS = re.compile("[‪-‮⁦-⁩]")
+ZERO_WIDTH = re.compile("[\u200b-\u200f\u2060-\u2064\ufeff\u00ad\u180e\u034f]")
+BIDI_CONTROLS = re.compile("[\u202a-\u202e\u2066-\u2069]")
 B64_BLOB = re.compile(r"(?<![A-Za-z0-9+/=_-])[A-Za-z0-9+/_-]{24,}={0,2}(?![A-Za-z0-9+/=_-])")
 URL_ENCODED = re.compile(r"(?:%[0-9A-Fa-f]{2}){3,}")
 # Hex: "49676e6f7265...", "49 67 6e 6f ...", "49:67:6e..." and "\x49\x67\x6e..." forms.

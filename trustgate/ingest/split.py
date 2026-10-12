@@ -347,7 +347,9 @@ class Splitter:
         if result.flagged:
             alert.tags.append(AI_EVASION_TAG)
             raised += 1
-        hidden_flags = {"hidden_text", "truncated", "zero_width", "bidi_control", "spoofed_metadata"}
+        # "truncated" alone is not hiding: the detector scans the full text, and 8% of real business
+        # mail is longer than the cap (docs/BENCHMARKS.md). The flag stays on the evidence for the analyst.
+        hidden_flags = {"hidden_text", "zero_width", "bidi_control", "spoofed_metadata"}
         if any(hidden_flags & set(e.flags) for e in alert.evidence):
             alert.tags.append(HIDDEN_CONTENT_TAG)
             raised += 1

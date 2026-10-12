@@ -59,7 +59,7 @@ def test_policy_down_escalates_t1(settings, store):
     d = gate.decide(ProposedAction(alert_id="A-1", verdict="benign", tool="close_alert",
                                    args={"reason": "x"}, cited_evidence=["facts.dmarc_pass"]))
     # The re-check will already disagree (dmarc fail), but even a benign-facts alert fails closed:
-    alert2 = Alert(alert_id="A-2", source="email", severity="low", facts=TypedFacts(dmarc_pass=True, sender_prior_messages=12,
+    alert2 = Alert(alert_id="A-2", source="email", severity="low", facts=TypedFacts(dmarc_pass=True, sender_prior_messages=12, reply_to_mismatch=False, sender_first_link=False, sender_new_sending_ip=False,
                    url_reputation="clean"), evidence=[])
     store.put_alert(alert2)
     d2 = gate.decide(ProposedAction(alert_id="A-2", verdict="benign", tool="close_alert",
@@ -71,7 +71,7 @@ def test_policy_down_escalates_t1(settings, store):
 @requires_opa
 def test_rate_limiter_down_escalates_t1(settings, store, opa_engine):
     alert2 = Alert(alert_id="A-2", source="email", severity="low",
-                   facts=TypedFacts(dmarc_pass=True, url_reputation="clean", sender_prior_messages=12), evidence=[])
+                   facts=TypedFacts(dmarc_pass=True, url_reputation="clean", sender_prior_messages=12, reply_to_mismatch=False, sender_first_link=False, sender_new_sending_ip=False), evidence=[])
     store.put_alert(alert2)
     gate = Gate("packs/soc.rego", recheck=facts_recheck, mode="enforce", settings=settings, store=store,
                 policy_engine=opa_engine, limiter=BrokenLimiter())
@@ -89,7 +89,7 @@ def test_timeout_escalates(settings, store, opa_engine):
         time.sleep(2)
         return "benign"
 
-    _seed(store, TypedFacts(dmarc_pass=True, url_reputation="clean", sender_prior_messages=12))
+    _seed(store, TypedFacts(dmarc_pass=True, url_reputation="clean", sender_prior_messages=12, reply_to_mismatch=False, sender_first_link=False, sender_new_sending_ip=False))
     gate = Gate("packs/soc.rego", recheck=slow, mode="enforce", settings=settings, store=store,
                 policy_engine=opa_engine, limiter=MemoryRateLimiter(), timeout_s=0.2)
     d = gate.decide(ProposedAction(alert_id="A-1", verdict="benign", tool="close_alert",

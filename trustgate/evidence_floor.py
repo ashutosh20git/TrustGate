@@ -44,6 +44,8 @@ class T1Evidence:
     enrichment_failed: bool = False
     cited_support: list[str] = field(default_factory=list)
     sender_anomalies: list[str] = field(default_factory=list)
+    unknown_behaviour: list[str] = field(default_factory=list)
+    history_discounted: bool = False  # the sender had history, but it could not count
 
     @property
     def cited_support_ok(self) -> bool:
@@ -62,6 +64,9 @@ class T1Evidence:
         if not self.costly_ok and self.sender_anomalies:
             out.append("T1: the sender has history, but is behaving unusually ("
                        + ", ".join(self.sender_anomalies) + "): a compromised account looks like this")
+        elif not self.costly_ok and self.unknown_behaviour and self.history_discounted:
+            out.append("T1: the sender has history, but whether it is behaving normally is unknown ("
+                       + ", ".join(self.unknown_behaviour) + " not supplied): a compromised account cannot be ruled out")
         elif not self.costly_ok:
             out.append("T1: no fact the attacker cannot cheaply control supports benign")
         if not self.cited_support_ok:
@@ -95,10 +100,18 @@ def t1_evidence(facts: TypedFacts, source: str, config: dict[str, Any] | None,
         if getattr(facts, name, None) in _UNKNOWN:
             result.unknown_core.append(name)
     result.sender_anomalies = [name for name in config.get("costly_negated_by", []) if getattr(facts, name, None) is True]
+    # Unknown is not "behaving normally": without these signals a hijacked mailbox is invisible
+    # (docs/BENCHMARKS.md, account takeover: 75% of replayed phishing closed before this).
+    result.unknown_behaviour = [name for name in config.get("costly_requires_known", []) if getattr(facts, name, None) is None]
     for cond in conditions:
         # History (the sender's or the organisation's) is exactly what a hijacked mailbox has.
-        if _holds(facts, cond) and not (result.sender_anomalies and cond["fact"].startswith(("sender_", "org_"))):
-            result.costly_support.append(f"{cond['fact']} {cond.get('op', '>=')} {cond['value']}")
+        history = cond["fact"].startswith(("sender_", "org_"))
+        if not _holds(facts, cond):
+            continue
+        if history and (result.sender_anomalies or result.unknown_behaviour):
+            result.history_discounted = True
+            continue
+        result.costly_support.append(f"{cond['fact']} {cond.get('op', '>=')} {cond['value']}")
     cited_facts = {c.split(".", 1)[1] for c in (cited or []) if c.startswith("facts.")}
     for cond in config.get("benign_support", []):
         if cond["fact"] in cited_facts and _holds(facts, cond):

@@ -14,7 +14,7 @@ import asyncio
 import hmac
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import ValidationError
 
@@ -62,7 +62,7 @@ def create_app(splitter: Splitter | None = None, store: Store | None = None) -> 
         return render_alert(alert)
 
     @app.get("/v1/alerts", dependencies=[Depends(require_token)])
-    def list_alerts(limit: int = 100) -> list[dict[str, Any]]:
+    def list_alerts(limit: int = Query(100, ge=1, le=1_000)) -> list[dict[str, Any]]:
         return [{"alert_id": a.alert_id, "source": a.source, "severity": a.severity, "tags": a.tags,
                  "label_coverage": a.label_coverage.ratio} for a in store.list_alerts(limit)]
 

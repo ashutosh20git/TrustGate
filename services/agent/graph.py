@@ -16,7 +16,6 @@ import os
 from pathlib import Path
 from typing import Any, TypedDict
 
-from jinja2 import Environment, FileSystemLoader
 from langgraph.graph import END, START, StateGraph
 from pydantic import ValidationError
 
@@ -33,8 +32,12 @@ ACTIONS = (
 )
 MAX_STEPS = 6
 
-_env = Environment(loader=FileSystemLoader(Path(__file__).parent / "prompts"), autoescape=False)
-SYSTEM_PROMPT = _env.get_template("system.j2").render(actions=ACTIONS)
+# A plain-text LLM prompt built from constants. The file's final newline is not part of the prompt.
+_ACTION_MENU = "".join(f"   - {name} (T{tier})\n" for name, tier in ACTIONS)
+SYSTEM_PROMPT = (
+    (Path(__file__).parent / "prompts" / "system.txt").read_text(encoding="utf-8")
+    .removesuffix("\n").replace("{action_menu}", _ACTION_MENU)
+)
 
 TOOLS: list[dict[str, Any]] = [
     {"type": "function", "function": {
