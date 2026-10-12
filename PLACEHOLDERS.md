@@ -23,6 +23,8 @@ or runs **degraded** — never silently open — and has a tracking issue in `bd
 | 12 | Analyst tokens | **Every approval, rejection and MCP re-pin is refused** (503), and the analyst views (queue, audit, metrics, pins) are closed: no identity, no access | `python scripts/init_secrets.py --analyst <name>` per analyst; hand each printed token to that analyst only, never to the agent | — (needs a `bd` issue) |
 | 15 | Ingest token | **Ingest refuses every alert** (503): alerts carry typed facts the gate trusts, so an unauthenticated poster could forge them | `python scripts/init_secrets.py` writes `secrets/ingest_token.txt`; configure your SIEM to send it as `Authorization: Bearer <token>` | — |
 | 16 | SOC connector | Allowed actions run against the mock SOC, not your tools | Write a connector class and set `TRUSTGATE_SOC_CLIENT` ([docs/SELF_HOSTING.md](docs/SELF_HOSTING.md#connecting-your-soc-tools)) | — |
+| 17 | Organisation-history facts | The re-check and the floor rely on sender history alone; legitimate senders without MTA history escalate | Post `observed.org_replied_to_sender`, `org_url_domain_first_seen`, `org_sender_domain_messages`, `org_attachment_prevalence` and the `sender_first_*` / `sender_new_sending_ip` flags (both yes and no) from the mail gateway or SIEM; `asset_criticality` and `process_signed` from the CMDB / EDR ([docs/RECHECK.md](docs/RECHECK.md)) | — |
+| 18 | Re-check model on real data | The starter model is trained on synthetic alerts (`synthetic_only` in its `.meta.json`) | `python scripts/train_recheck.py --data <tickets.jsonl> --feedback` ([docs/RECHECK.md](docs/RECHECK.md)) | — |
 
 ## How "fails closed" is wired
 

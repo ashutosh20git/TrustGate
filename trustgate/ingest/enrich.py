@@ -18,6 +18,18 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 from trustgate.config import Settings
 
 _REPUTATION_ORDER = {"unknown": 0, "clean": 1, "suspicious": 2, "malicious": 3}
+# Across several links: one link nobody could vouch for outweighs another link's clean result.
+_ACROSS_URLS = {"clean": 0, "unknown": 1, "suspicious": 2, "malicious": 3}
+
+
+def url_verdict(answers: list[str], quorum: int) -> str:
+    """One URL's reputation from the sources that answered. Any bad answer wins (sources
+    disagreeing is itself a warning); "clean" needs at least quorum sources saying clean."""
+    known = [a for a in answers if a != "unknown"]
+    bad = [a for a in known if a != "clean"]
+    if bad:
+        return max(bad, key=_REPUTATION_ORDER.__getitem__)
+    return "clean" if len(known) >= max(1, quorum) else "unknown"
 _SANDBOX_ORDER = {"not_run": 0, "clean": 1, "suspicious": 2, "malicious": 3}
 
 
@@ -187,12 +199,9 @@ class ThreatIntel:
             report.asn = report.asn or safe(self.otx_asn, ip)
 
         if urls:
-            reputation = "unknown"
-            for url in urls[:10]:
-                for lookup in (self.virustotal_url, self.urlhaus):
-                    verdict = safe(lookup, url) or "unknown"
-                    reputation = verdict if reputation == "unknown" else _worse(reputation, verdict, _REPUTATION_ORDER)
-            report.url_reputation = reputation
+            per_url = [url_verdict([safe(lookup, url) or "unknown" for lookup in (self.virustotal_url, self.urlhaus)],
+                                   self.s.ti_quorum) for url in urls[:10]]
+            report.url_reputation = max(per_url, key=_ACROSS_URLS.__getitem__)
         else:
             report.url_reputation = "clean"  # nothing to look up, nothing bad
 

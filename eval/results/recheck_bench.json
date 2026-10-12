@@ -1,0 +1,213 @@
+{
+  "judges": {
+    "scorecard": {
+      "false_benign_rate": 0.0,
+      "attacks_let_through": [],
+      "benign_pass_rate": 1.0
+    },
+    "model": {
+      "false_benign_rate": 0.1765,
+      "attacks_let_through": [
+        "dmarc_unknown",
+        "endpoint_unsigned_clean_hash",
+        "endpoint_critical_asset"
+      ],
+      "benign_pass_rate": 1.0
+    },
+    "ensemble": {
+      "false_benign_rate": 0.0,
+      "attacks_let_through": [],
+      "benign_pass_rate": 1.0
+    },
+    "t1": {
+      "false_benign_rate": 0.0,
+      "attacks_let_through": [],
+      "benign_pass_rate": 1.0
+    }
+  },
+  "cases": {
+    "owned_domain_full_auth": {
+      "source": "email",
+      "scorecard": "unsure",
+      "model": "malicious",
+      "ensemble": "malicious",
+      "floor": [
+        "T1: no fact the attacker cannot cheaply control supports benign"
+      ]
+    },
+    "owned_domain_bimi_less": {
+      "source": "email",
+      "scorecard": "unsure",
+      "model": "malicious",
+      "ensemble": "malicious",
+      "floor": [
+        "T1: no fact the attacker cannot cheaply control supports benign"
+      ]
+    },
+    "owned_domain_fresh_cert": {
+      "source": "email",
+      "scorecard": "unsure",
+      "model": "malicious",
+      "ensemble": "malicious",
+      "floor": [
+        "T1: no fact the attacker cannot cheaply control supports benign"
+      ]
+    },
+    "owned_domain_one_prior_message": {
+      "source": "email",
+      "scorecard": "unsure",
+      "model": "malicious",
+      "ensemble": "malicious",
+      "floor": [
+        "T1: no fact the attacker cannot cheaply control supports benign"
+      ]
+    },
+    "owned_domain_qr_attachment": {
+      "source": "email",
+      "scorecard": "unsure",
+      "model": "malicious",
+      "ensemble": "malicious",
+      "floor": [
+        "T1: no fact the attacker cannot cheaply control supports benign"
+      ]
+    },
+    "compromised_first_link": {
+      "source": "email",
+      "scorecard": "unsure",
+      "model": "unsure",
+      "ensemble": "unsure",
+      "floor": [
+        "T1: the sender has history, but is behaving unusually (sender_first_link): a compromised account looks like this"
+      ]
+    },
+    "compromised_reply_to_elsewhere": {
+      "source": "email",
+      "scorecard": "unsure",
+      "model": "malicious",
+      "ensemble": "malicious",
+      "floor": [
+        "T1: the sender has history, but is behaving unusually (reply_to_mismatch): a compromised account looks like this"
+      ]
+    },
+    "compromised_new_sending_ip": {
+      "source": "email",
+      "scorecard": "unsure",
+      "model": "unsure",
+      "ensemble": "unsure",
+      "floor": [
+        "T1: the sender has history, but is behaving unusually (sender_new_sending_ip): a compromised account looks like this"
+      ]
+    },
+    "compromised_first_attachment": {
+      "source": "email",
+      "scorecard": "unsure",
+      "model": "malicious",
+      "ensemble": "malicious",
+      "floor": [
+        "T1: the sender has history, but is behaving unusually (sender_first_attachment): a compromised account looks like this"
+      ]
+    },
+    "compromised_unseen_link_domain": {
+      "source": "email",
+      "scorecard": "unsure",
+      "model": "unsure",
+      "ensemble": "unsure",
+      "floor": [
+        "T1: the sender has history, but is behaving unusually (org_url_domain_first_seen): a compromised account looks like this"
+      ]
+    },
+    "failed_lookup_otherwise_clean": {
+      "source": "email",
+      "scorecard": "unsure",
+      "model": "unsure",
+      "ensemble": "unsure",
+      "floor": [
+        "T1: a threat-intel lookup failed; facts are missing, not clean"
+      ]
+    },
+    "dmarc_unknown": {
+      "source": "email",
+      "scorecard": "unsure",
+      "model": "benign",
+      "ensemble": "unsure",
+      "floor": [
+        "T1: core facts unknown: dmarc_pass"
+      ]
+    },
+    "network_unknown_reputation": {
+      "source": "network",
+      "scorecard": "unsure",
+      "model": "unsure",
+      "ensemble": "unsure",
+      "floor": [
+        "T1: core facts unknown: ip_abuse_score",
+        "T1: no cited typed fact supports benign"
+      ]
+    },
+    "network_elevated_abuse": {
+      "source": "network",
+      "scorecard": "unsure",
+      "model": "malicious",
+      "ensemble": "malicious",
+      "floor": [
+        "T1: no cited typed fact supports benign"
+      ]
+    },
+    "endpoint_sandbox_not_run": {
+      "source": "endpoint",
+      "scorecard": "unsure",
+      "model": "unsure",
+      "ensemble": "unsure",
+      "floor": [
+        "T1: core facts unknown: sandbox_verdict"
+      ]
+    },
+    "endpoint_unsigned_clean_hash": {
+      "source": "endpoint",
+      "scorecard": "unsure",
+      "model": "benign",
+      "ensemble": "unsure",
+      "floor": []
+    },
+    "endpoint_critical_asset": {
+      "source": "endpoint",
+      "scorecard": "unsure",
+      "model": "benign",
+      "ensemble": "unsure",
+      "floor": []
+    },
+    "established_sender": {
+      "source": "email",
+      "scorecard": "benign",
+      "model": "benign",
+      "ensemble": "benign",
+      "floor": []
+    },
+    "established_sender_bimi": {
+      "source": "email",
+      "scorecard": "benign",
+      "model": "benign",
+      "ensemble": "benign",
+      "floor": []
+    },
+    "network_clean_ip": {
+      "source": "network",
+      "scorecard": "benign",
+      "model": "benign",
+      "ensemble": "benign",
+      "floor": []
+    },
+    "endpoint_clean_signed": {
+      "source": "endpoint",
+      "scorecard": "benign",
+      "model": "benign",
+      "ensemble": "benign",
+      "floor": []
+    }
+  },
+  "meta": {
+    "attacks": 17,
+    "controls": 4,
+    "min_confidence": 0.9
+  }
+}

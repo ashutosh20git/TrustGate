@@ -78,6 +78,25 @@ class TypedFacts(BaseModel):
     sender_first_link: bool | None = None
     sender_first_attachment: bool | None = None
     sender_new_sending_ip: bool | None = None
+    # Facts a campaign cannot buy, from the organisation's own history (SIEM / mail gateway).
+    # Relationship: has anyone here ever replied to this sender? An attacker can send mail
+    # but cannot make staff answer it.
+    org_replied_to_sender: bool | None = None
+    # Messages from this sender's domain to anyone in the organisation before this one.
+    org_sender_domain_messages: int | None = Field(None, ge=0)
+    # Nobody in the organisation has received or clicked this link domain before.
+    org_url_domain_first_seen: bool | None = None
+    # How many times this attachment hash was seen across the organisation before.
+    org_attachment_prevalence: int | None = Field(None, ge=0)
+    # Richer authentication and infrastructure signals. arc_pass and bimi_pass come from
+    # the trusted Authentication-Results header; the others from enrichment feeds.
+    arc_pass: bool | None = None
+    bimi_pass: bool | None = None
+    cert_age_days: int | None = Field(None, ge=0)              # TLS certificate of the link host
+    domain_first_seen_days: int | None = Field(None, ge=0)     # passive DNS: days since first resolution
+    # Endpoint context from the CMDB / EDR.
+    asset_criticality: Literal["low", "medium", "high", "critical"] | None = None
+    process_signed: bool | None = None                          # the flagged process has a valid signature
 
     @field_validator("url_domains")
     @classmethod
@@ -157,6 +176,16 @@ class TypedFacts(BaseModel):
             "sender_first_link": self.sender_first_link,
             "sender_first_attachment": self.sender_first_attachment,
             "sender_new_sending_ip": self.sender_new_sending_ip,
+            "org_replied_to_sender": self.org_replied_to_sender,
+            "org_sender_domain_messages": self.org_sender_domain_messages,
+            "org_url_domain_first_seen": self.org_url_domain_first_seen,
+            "org_attachment_prevalence": self.org_attachment_prevalence,
+            "arc_pass": self.arc_pass,
+            "bimi_pass": self.bimi_pass,
+            "cert_age_days": self.cert_age_days,
+            "domain_first_seen_days": self.domain_first_seen_days,
+            "asset_criticality": self.asset_criticality,
+            "process_signed": self.process_signed,
         }
 
     def target_values(self, fact: str) -> set[str]:

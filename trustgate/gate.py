@@ -390,7 +390,9 @@ class Gate:
             decision.recheck_verdict, decision.recheck_tokens = result.verdict, result.tokens
             policy_input["recheck_verdict"] = result.verdict
             if not (action.verdict == "benign" and result.verdict == "benign"):
-                raise _Escalate([f"facts and text disagree: agent={action.verdict}, facts-only={result.verdict}"],
+                # The judges' reasons (low confidence, scorecard warnings) are for the analyst only.
+                raise _Escalate([f"facts and text disagree: agent={action.verdict}, facts-only={result.verdict}"]
+                                + [f"re-check: {r}" for r in result.reasons[:4]],
                                 self._tainted(action, alert))
             if not any(c.startswith("facts.") for c in action.cited_evidence):
                 raise _Escalate(["no typed-fact citation"], self._tainted(action, alert))
