@@ -72,7 +72,7 @@ def _close(gate, alert_id="A-1", tool="close_alert", **args):
 @requires_opa
 def test_executed_actions_are_ledgered_with_their_reverse(soc, store):
     gate, effects = soc
-    _put(store, ioc_ips=["203.0.113.9"], **KNOWN)
+    _put(store, ioc_ips=["203.0.113.9"], malicious_ips=["203.0.113.9"], **KNOWN)
     _close(gate)
     gate.call("block_ip", alert_id="A-1", ip="203.0.113.9", verdict="malicious", cited_evidence=["facts.ioc_ips"])
     by_tool = {a.tool: a for a in store.actions("A-1")}
@@ -83,7 +83,7 @@ def test_executed_actions_are_ledgered_with_their_reverse(soc, store):
 @requires_opa
 def test_analyst_revert_runs_the_reverse(soc, store):
     gate, effects = soc
-    _put(store, ioc_ips=["203.0.113.9"], **KNOWN)
+    _put(store, ioc_ips=["203.0.113.9"], malicious_ips=["203.0.113.9"], **KNOWN)
     gate.call("block_ip", alert_id="A-1", ip="203.0.113.9", verdict="malicious", cited_evidence=["facts.ioc_ips"])
     rec = store.actions("A-1")[0]
     gate.revert(rec.id, by="ana", reason="false positive")
@@ -194,7 +194,7 @@ def test_explain_lists_what_never_runs_automatically(gate, store):
 
 @requires_opa
 def test_explain_t2_and_t3(gate, store):
-    _put(store, ioc_ips=["203.0.113.9"], **KNOWN)
+    _put(store, ioc_ips=["203.0.113.9"], malicious_ips=["203.0.113.9"], **KNOWN)
     d = gate.decide(ProposedAction(alert_id="A-1", verdict="malicious", tool="block_ip", args={"ip": "198.51.100.7"},
                                    cited_evidence=["facts.ioc_ips"]))
     out = explain(gate, store.get_escalation(d.escalation_id))
@@ -381,7 +381,7 @@ def test_part2_endpoints_need_a_token(soc, settings, store):
     proxy = TestClient(create_proxy(gate=gate, settings=settings,
                                     analysts=AnalystDirectory.parse(f"ana:{token_hash('tok')}")))
     auth = {"Authorization": "Bearer tok"}
-    _put(store, ioc_ips=["203.0.113.9"], **KNOWN)
+    _put(store, ioc_ips=["203.0.113.9"], malicious_ips=["203.0.113.9"], **KNOWN)
     gate.call("block_ip", alert_id="A-1", ip="203.0.113.9", verdict="malicious", cited_evidence=["facts.ioc_ips"])
     for path in ("/v1/actions", "/v1/analysts", "/v1/compliance/cert-in"):
         assert proxy.get(path).status_code == 401 and proxy.get(path, headers=auth).status_code == 200, path

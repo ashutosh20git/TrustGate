@@ -70,7 +70,8 @@ def _email_alert(i: int, rng: random.Random, malicious: bool, authserv: str) -> 
         "severity": "high" if malicious else "low",
         "rule_name": "phishing_reported" if malicious else "mail_flagged",
         # MTA history: established senders have delivered mail before; phishing senders have not.
-        "observed": {"ioc_ips": ioc_ips, "sender_prior_messages": 0 if malicious else rng.randint(5, 400)},
+        "observed": {"ioc_ips": ioc_ips, "malicious_ips": ioc_ips,
+                     "sender_prior_messages": 0 if malicious else rng.randint(5, 400)},
         "enrichment": {"sender_domain_age_days": age,
                        "url_reputation": "malicious" if malicious else "clean",
                        "sandbox_verdict": "not_run"},
@@ -87,7 +88,7 @@ def _network_alert(i: int, rng: random.Random, malicious: bool) -> dict[str, Any
         "source": "network",
         "severity": "high" if malicious else "low",
         "rule_name": "ids_signature" if malicious else "flow_anomaly",
-        "observed": {"ioc_ips": [ip]},
+        "observed": {"ioc_ips": [ip], "malicious_ips": [ip] if malicious else []},
         "enrichment": {"ip_abuse_score": 92 if malicious else 2, "asn": 64500,
                        "url_reputation": "unknown", "sandbox_verdict": "not_run"},
         "fields": {"http.user_agent": ua, "http.uri": "/admin/login.php", "dns.query": "c2.example" if malicious else "cdn.example"},
@@ -114,12 +115,13 @@ def _endpoint_alert(i: int, rng: random.Random, malicious: bool) -> dict[str, An
 
 def _auth_alert(i: int, rng: random.Random, malicious: bool) -> dict[str, Any]:
     account = rng.choice(ACCOUNTS)
+    ip = rng.choice(MALICIOUS_IPS) if malicious else None
     return {
         "alert_id": f"A-{i:04d}",
         "source": "auth",
         "severity": "high" if malicious else "low",
         "rule_name": "impossible_travel" if malicious else "login_info",
-        "observed": {"accounts": [account], "ioc_ips": [rng.choice(MALICIOUS_IPS)] if malicious else []},
+        "observed": {"accounts": [account], "ioc_ips": [ip] if ip else [], "malicious_ips": [ip] if ip else []},
         "enrichment": {"ip_abuse_score": 80 if malicious else 1, "url_reputation": "unknown", "sandbox_verdict": "not_run"},
         "fields": {"auth.attempted_username": account, "auth.failure_reason": "bad_password" if malicious else "none"},
         "ground_truth": {"label": "malicious" if malicious else "benign", "scenario": "auth", "account": account},

@@ -54,11 +54,15 @@ test_t1_denied_without_bounded_expiry if {
 t2 := {
 	"pack": "soc", "tool": "block_ip", "tier": 2, "agent_verdict": "malicious", "cited": ["facts.ioc_ips"],
 	"alert_severity": "high", "ai_evasion_attempt": false, "contains_raw_evidence": false, "output_entities": [],
-	"target": "203.0.113.9", "fact_targets": ["203.0.113.9"],
+	"target": "203.0.113.9", "fact_targets": ["203.0.113.9"], "target_evidence_ok": true,
 }
 
 test_t2_allowed_on_typed_fact_target if {
 	data.trustgate.soc.decision.allow with input as t2
+}
+
+test_t2_denied_without_evidence_against_the_target if {
+	not data.trustgate.soc.decision.allow with input as object.union(t2, {"target_evidence_ok": false})
 }
 
 test_t2_denied_off_facts if {

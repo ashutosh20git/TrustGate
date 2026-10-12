@@ -77,6 +77,13 @@ deny contains "T2: target not in typed facts" if {
 	not input.target in input.fact_targets
 }
 
+# T2: the target itself must be shown to be bad (its own threat evidence, or facts that show
+# compromise), not merely appear in the alert: an attacker can get a partner's IP logged.
+deny contains "T2: no evidence against the target itself" if {
+	input.tier == 2
+	not input.target_evidence_ok == true
+}
+
 # T3: outbound. No raw evidence and no floor-blocked entities may leave.
 deny contains "T3: raw evidence in outbound payload" if {
 	input.tier == 3

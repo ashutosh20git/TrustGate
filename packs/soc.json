@@ -36,15 +36,24 @@
       "targets": {
         "block_ip": {
           "arg": "ip",
-          "fact": "ioc_ips"
+          "fact": "ioc_ips",
+          "evidence_fact": "malicious_ips"
         },
         "isolate_host": {
           "arg": "host",
-          "fact": "hosts"
+          "fact": "hosts",
+          "requires_verdict": "malicious",
+          "sources": [
+            "endpoint"
+          ]
         },
         "disable_account": {
           "arg": "account",
-          "fact": "accounts"
+          "fact": "accounts",
+          "requires_verdict": "malicious",
+          "sources": [
+            "auth"
+          ]
         }
       },
       "outbound": {

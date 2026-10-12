@@ -137,6 +137,10 @@ class Gate:
         self._inflight = 0
         self._abandoned = 0
         self._alert_ctx: contextvars.ContextVar[Alert | None] = contextvars.ContextVar("trustgate_alert", default=None)
+        # Outbound text already let through per alert: a secret split across messages is checked
+        # as a whole. In memory, per process (bounded); see docs/BENCHMARKS.md.
+        self._sent: dict[str, list[str]] = {}
+        self._sent_lock = threading.Lock()
 
     # --- registration ---------------------------------------------------------
 
@@ -416,9 +420,29 @@ class Gate:
             target, fact = value_match.target_of(self.pack, action.tool, action.args,
                                                   registered.target_arg if registered else None)
             targets = value_match.fact_targets(alert.facts, fact)
-            policy_input.update(target=target, fact_targets=targets)
+            policy_input.update(target=target, fact_targets=targets, target_evidence_ok=False)
             if target is None or target not in targets:
                 raise _Escalate(["target not in typed facts"], self._tainted(action, alert))
+            # Being in the alert is not enough: the target itself must be shown to be bad, or an
+            # attacker who gets a partner's IP or a victim's host into an alert gets it disrupted.
+            spec = self.pack.target_spec(action.tool) or {}
+            if spec.get("evidence_fact") and target not in value_match.fact_targets(alert.facts, spec["evidence_fact"]):
+                raise _Escalate([f"T2: the target has no threat evidence of its own (facts.{spec['evidence_fact']})"],
+                                self._tainted(action, alert))
+            if spec.get("sources") and alert.source not in spec["sources"]:
+                # A host that merely *received* a phishing email is not shown to be compromised:
+                # isolation needs an alert about the host itself (EDR), not one that names it.
+                raise _Escalate([f"T2: {action.tool} needs an alert about the target itself "
+                                 f"(source {', '.join(spec['sources'])}), not a {alert.source} alert"],
+                                self._tainted(action, alert))
+            if spec.get("requires_verdict"):
+                result = self.recheck(alert.facts)
+                state.recheck_verdict, state.recheck_tokens = result.verdict, result.tokens
+                decision.recheck_verdict, decision.recheck_tokens = result.verdict, result.tokens
+                if result.verdict != spec["requires_verdict"]:
+                    raise _Escalate([f"T2: the facts do not show compromise (facts-only verdict {result.verdict})"],
+                                    self._tainted(action, alert))
+            policy_input["target_evidence_ok"] = True
 
         if tier == Tier.OUTBOUND:
             self._t3(action, alert, policy_input, decision, registered)
@@ -439,6 +463,9 @@ class Gate:
                 if not self.limiter.hit(f"{self.pack.name}:t{int(tier)}:{kind}:{key}", limit, window_s):
                     raise _Escalate([f"campaign rate limit: over {limit} T{int(tier)} actions for one {kind} "
                                      f"in {window_s // 60} min"])
+        if tier == Tier.OUTBOUND:
+            self._remember_sent(alert.alert_id, value_match.outbound_fields(self.pack, action.tool,
+                                                                            decision.redacted_args or action.args))
         decision.reasons.append(f"T{int(tier)} checks passed")
         return decision
 
@@ -512,6 +539,10 @@ class Gate:
             raise _Escalate([f"sensitive data in outbound payload: {', '.join(scan.blocked_entities)}"])
         if hidden:
             raise _Escalate([f"sensitive data hidden by encoding in outbound payload: {', '.join(hidden)}"])
+        leaked = self._leaked_secrets(alert, fields)
+        if leaked:
+            raise _Escalate([f"sensitive value from this alert's evidence in outbound text (transformed or split "
+                             f"across messages): {', '.join(leaked)}"])
         if any(f.action == "redact" for f in scan.findings):
             decision.redacted_args = {**action.args, **scan.redacted}
             decision.reasons.append("outbound payload redacted: " + ", ".join(
@@ -524,6 +555,24 @@ class Gate:
             args[body_arg] = f"{args[body_arg]}\n\n{stamp}"
             decision.redacted_args = args
             decision.reasons.append("provenance stamp added")
+
+    def _leaked_secrets(self, alert: Alert, fields: dict[str, str]) -> list[str]:
+        """Floor-blocked values from this alert's own evidence, recoverable from this message together
+        with everything already sent for the alert (reversed, spelled out, interleaved, split)."""
+        secrets = value_match.sensitive_values(alert, set(self.pack.block_entities))
+        if not secrets or not fields:
+            return []
+        with self._sent_lock:
+            prior = list(self._sent.get(alert.alert_id, []))
+        return value_match.leaked_values(prior + list(fields.values()), secrets)
+
+    def _remember_sent(self, alert_id: str, fields: dict[str, str]) -> None:
+        with self._sent_lock:
+            history = self._sent.setdefault(alert_id, [])
+            history.extend(fields.values())
+            del history[:-50]  # bounded per alert
+            if len(self._sent) > 10_000:
+                self._sent.pop(next(iter(self._sent)))
 
     def _campaign_keys(self, facts: TypedFacts) -> list[tuple[str, str]]:
         """What links alerts of one campaign even across sender domains: the sender domain, the
@@ -774,6 +823,9 @@ class Gate:
         except NotConfigured as exc:
             raise ApprovalRefused(f"output scanner unavailable ({exc.what}); outbound approval fails closed") from None
         blocked = sorted(set(scan.blocked_entities) | {e for e in hidden if self.output_scanner.action_for(e) == "block"})
+        alert = self.store.get_alert(action.alert_id)
+        if alert is not None:
+            blocked = sorted(set(blocked) | set(self._leaked_secrets(alert, fields)))
         if blocked:
             raise ApprovalRefused(f"{', '.join(blocked)} may never leave, even with approval")
         if any(f.action == "redact" for f in scan.findings):

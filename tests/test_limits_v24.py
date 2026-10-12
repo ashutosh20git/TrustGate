@@ -170,7 +170,7 @@ def test_undo_tools_hidden_and_refused(settings, store, opa_engine):
 @requires_opa
 def test_response_drift_rolls_back_the_call(settings, store, opa_engine):
     gw, upstream, _ = _gw(settings, store, opa_engine)
-    store.put_alert(_alert(ioc_ips=["203.0.113.9"], **KNOWN))
+    store.put_alert(_alert(ioc_ips=["203.0.113.9"], malicious_ips=["203.0.113.9"], **KNOWN))
     assert _block(gw).is_error is False                 # baseline shape
     upstream.structured = {"ok": True, "next_step": "x"}  # drift on the second call
     assert _block(gw).is_error is True
@@ -182,7 +182,7 @@ def test_response_drift_rolls_back_the_call(settings, store, opa_engine):
 @requires_opa
 def test_injection_rollback_runs_upstream_without_proxy(settings, store, opa_engine):
     gw, upstream, _ = _gw(settings, store, opa_engine)
-    store.put_alert(_alert(ioc_ips=["203.0.113.9"], **KNOWN))
+    store.put_alert(_alert(ioc_ips=["203.0.113.9"], malicious_ips=["203.0.113.9"], **KNOWN))
     _block(gw)
 
     async def serve_and_rollback():  # as in the gateway: the loop serves while a worker thread rolls back
