@@ -483,6 +483,8 @@ Published ports bind to `127.0.0.1` unless `TRUSTGATE_BIND_ADDR` says otherwise.
 
 ## Evaluation v2
 
+**Benchmark results** (adaptive red-team, AgentDojo, real phishing mail), what they broke and how it was fixed: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+
 The headline changes: not only how many attacks TrustGate stops, but **how many got past the detector and were stopped by the gate**. That number is what makes the "use both" pitch credible.
 
 ### Configurations (same alerts, same agent model)
