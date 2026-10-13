@@ -1253,7 +1253,10 @@ See `docs/SELF_HOSTING.md` for the operator walkthrough. The design points:
 
 One image for every service; the command selects which runs. Python 3.11 slim, Tesseract for
 OCR, all runtime extras, spaCy `en_core_web_lg`. `EXTRAS=full` adds the torch-based detector
-(several GB); the default leaves it out and the detector runs degraded. A **starter XGBoost
+(several GB); the default leaves it out and the detector runs degraded. `SPACY_MODEL=en_core_web_sm`
+trades Presidio recall for a smaller image (the image sets `TRUSTGATE_SPACY_MODEL` to match).
+Multi-stage: a builder stage installs into `/opt/venv` with compilers present; the runtime stage
+copies only the venv, so no build toolchain ships. A **starter XGBoost
 re-check** is trained at build time so T1 works without Ollama. Runs as **uid 10001**; only
 `/app/data` is writable. `.dockerignore` keeps `.env`, `secrets/` and `.venv` out. Published
 by `.github/workflows/publish.yml` to `ghcr.io/ashutosh20git/trustgate` (`latest`,

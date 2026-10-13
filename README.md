@@ -4,7 +4,7 @@
 
 > "Untrusted text can raise suspicion but never lower it. TrustGate makes every security-reducing action prove itself on evidence the attacker can't write."
 
-Mitigata CyberForge 2026 · Team: Ashutosh Neelesh Dubey + teammate · Build window: Sat 31 Oct 2026, 10:00 → Sun 1 Nov 2026, 23:59 IST (about 38 hours)
+Mitigata CyberForge 2026 · Team: Ashutosh Neelesh Dubey + teammate · Build window: Sat 31 Oct 2026, 10:00 → Sun 1 Nov 2026, 23:59 IST (about 38 hours) · Started 8 Oct 2026 for this hackathon: timeline, AI assistance and every third-party component in [`DISCLOSURE.md`](DISCLOSURE.md)
 
 ## Try the demo (5 minutes, no clone)
 
@@ -315,7 +315,7 @@ Full detail and wiring: [`PLACEHOLDERS.md`](PLACEHOLDERS.md).
 | [ ] Hugging Face token + Prompt Guard 2 licence | Prompt Guard 2 detector signal | Detector runs on regex + stitch only | `tg-xeq` |
 | [ ] Ollama + a small re-check model | Facts-only re-check (default backend) | **T1 actions fail closed** (or train XGBoost) | `tg-8wu` |
 | [ ] VirusTotal / AbuseIPDB / OTX / URLhaus keys | Threat-intel → typed facts | Lookup skipped; fact stays unknown | `tg-8t2` |
-| [ ] Empty GitHub repository | CI, versioned policies | Local CI only | — |
+| [x] GitHub repository | CI, versioned policies | Done: [ashutosh20git/TrustGate](https://github.com/ashutosh20git/TrustGate) | — |
 
 The agent and the attacker must be different models (dossier 13.3). The attack
 suite is sized with `--attempts` and `--clean`; set these to fit your LLM budget.
@@ -349,7 +349,7 @@ The team decides which of these to use and whether a subset is enough.
 
 ### 4. Decisions only the team can make
 
-- [ ] **Hackathon rules (most important).** The blueprint allows code preparation before 31 Oct only if the organisers permit it, and the rules prohibit pre-existing solutions. Confirm with Mitigata (pratyasha.m@mitigata.com) before relying on this prepared codebase at the event. Issue `tg-e5d`.
+- [ ] **Hackathon rules (most important).** The blueprint allows code preparation before 31 Oct only if the organisers permit it, and the rules prohibit pre-existing solutions. TrustGate is not pre-existing: it was started on 8 Oct 2026 for this hackathon ([timeline](DISCLOSURE.md#project-timeline)). Get Mitigata's written confirmation (pratyasha.m@mitigata.com) that the preparation is allowed before relying on it at the event. Issue `tg-e5d`.
 - [ ] **Pinned models** for the agent, the re-check and the adaptive attacker.
 - [ ] **Audit store:** SQLite (default) or PostgreSQL (`DATABASE_URL`; Compose uses Postgres). Both work.
 - [ ] **Policy-pack values:** replace the example critical assets / allowlists in `packs/*.json` with the real environment's. Issue `tg-981`.
@@ -563,7 +563,7 @@ Cut order when time runs short (first to go at the top):
 | Sub-50 ms at production scale | Prototype hardware and code | We report our measured latency per decision |
 | SSO, RBAC, multi-tenancy, certifications | Enterprise work with no demo value | Roadmap slide for the cloud control plane |
 | CaMeL-style data-flow tracking inside the agent's plan | Requires rewriting the agent | Value-matching at the tool boundary, stated as a limit |
-| Track record and customers | Only time fixes this | Open-source the core after the hackathon |
+| Track record and customers | Only time fixes this | The core is open source, so anyone can audit it; pilots after the hackathon |
 
 ---
 
@@ -580,7 +580,7 @@ Cut order when time runs short (first to go at the top):
 
 ## Disclosure
 
-The hackathon rules require disclosing every third-party tool, API, dataset and open-source component. `DISCLOSURE.md` is kept up to date as each library is added. Expected entries include FastAPI, Uvicorn, Pydantic, LangGraph, LiteLLM, Open Policy Agent, Ollama with Qwen or Llama, Llama Prompt Guard 2, LLM Guard, Microsoft Presidio, spaCy, PyMuPDF, python-docx, openpyxl, python-pptx, the Model Context Protocol SDK, Redis, PostgreSQL, SQLModel, structlog, OpenTelemetry, Streamlit, Plotly, promptfoo, garak, PyRIT, pytest, Docker, the threat-intel APIs listed above, and every dataset used.
+The hackathon rules require disclosing every third-party tool, API, dataset and open-source component. [`DISCLOSURE.md`](DISCLOSURE.md) is the complete list: the project timeline, the AI coding assistant (Claude Code), every library, model, external service and benchmark dataset, and the CI and infrastructure tools. It is kept up to date as each one is added.
 
 ---
 

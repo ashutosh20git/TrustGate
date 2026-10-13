@@ -15,7 +15,7 @@ or runs **degraded** — never silently open — and has a tracking issue in `bd
 | 6 | Docker running + memory | `docker compose up` cannot start the stack | Start Docker Desktop, set memory ~6 GB, keep Ollama native | `tg-lm9` |
 | 7 | llm-guard on Python 3.13 | LLM Guard scanners unavailable on the dev machine (fine in containers) | Use Python 3.11 locally, or rely on Presidio + regex (both work on 3.13) | `tg-hwm` |
 | 8 | Policy-pack values | Example critical assets / allowlists / entity lists | Replace in `packs/soc.json`, `packs/generic.json` with the real environment's | `tg-981` |
-| 9 | Hackathon rules decision | — | Confirm pre-build is allowed with Mitigata | `tg-e5d` |
+| 9 | Hackathon rules decision | — | Get Mitigata's written confirmation that preparing before the 31 Oct build window is allowed ([timeline](DISCLOSURE.md#project-timeline)) | `tg-e5d` |
 | 10 | Optional (Lakera, SIEM) | Off by default; first in the cut order | Lakera key / Splunk HEC as needed | `tg-0gx` |
 | 13 | Tesseract OCR binary | Image text is not read; attachments are flagged `ocr_unavailable` (QR decoding still works) | Install `tesseract-ocr` on the ingest host | — |
 | 14 | Provenance key (optional) | Provenance stamps are unsigned: they still raise suspicion, but receivers cannot check them | Set the same `TRUSTGATE_PROVENANCE_KEY` (or Docker secret `provenance_key`) on every gate that hands off to another | — |

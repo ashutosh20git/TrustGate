@@ -4,18 +4,39 @@
 #   docker build -f docker/Dockerfile.mcp-gateway -t trustgate-mcp-gateway .
 #   docker run -i --rm --env-file .env trustgate-mcp-gateway \
 #       --server-name mock-soc --policy packs/soc.rego -- python -m services.mock_soc.mcp_server
-FROM python:3.11-slim
+#
+# Two stages, as in docker/Dockerfile: the builder installs into /opt/venv, the
+# runtime stage copies only the venv. SPACY_MODEL works the same way too.
 
-ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+# ---- builder ------------------------------------------------------------------
+FROM python:3.11-slim AS builder
+
+ARG SPACY_MODEL=en_core_web_lg
+ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
+    VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+RUN python -m venv /opt/venv
+
 COPY pyproject.toml README.md ./
 COPY trustgate ./trustgate
-RUN pip install ".[mcp,server,output-scan]" && python -m spacy download en_core_web_lg
+RUN pip install ".[mcp,server,output-scan]" && python -m spacy download "$SPACY_MODEL"
 
-COPY . .
+# ---- runtime ------------------------------------------------------------------
+FROM python:3.11-slim AS runtime
+
+ARG SPACY_MODEL=en_core_web_lg
+ENV PYTHONUNBUFFERED=1 \
+    VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH \
+    TRUSTGATE_SPACY_MODEL=$SPACY_MODEL
+WORKDIR /app
+
+COPY --from=builder /opt/venv /opt/venv
+COPY trustgate ./trustgate
+COPY services ./services
+COPY packs ./packs
 
 ENTRYPOINT ["python", "-m", "trustgate.mcp.gateway"]
