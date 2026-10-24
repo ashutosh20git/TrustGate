@@ -193,7 +193,7 @@ services/                  the deployable services
 packs/                     policy packs: floor.rego/json, soc.rego/json, generic.rego/json, tests
 eval/                      attack suite, configs A-D, simulator, metrics
 scripts/                   init_secrets, seed_demo, train_recheck, ci_eval_guard, ...
-tests/                     168 tests, each mapped to a feature or silent-failure fix
+tests/                     217 tests, each mapped to a feature or silent-failure fix
 docker/, docker-compose*.yml, deploy/helm/   deployment
 docs/SELF_HOSTING.md       operator guide
 ```
@@ -1432,7 +1432,7 @@ with `reopen_alert`. One click on *Revert* undoes it.
 
 ## 22. Tests and CI
 
-168 tests (`pytest`), each mapped to a feature or a silent-failure fix:
+217 tests (`pytest`), each mapped to a feature or a silent-failure fix:
 
 | File | Covers |
 |---|---|

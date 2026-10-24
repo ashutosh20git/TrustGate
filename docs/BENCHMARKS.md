@@ -256,7 +256,18 @@ environment; benchmarks that could not be reached are listed at the end.
 
 | Benchmark | Result on the final code |
 |---|---|
-<!-- r2:glance -->
+| Legitimate mail (Enron-Spam, 8,245 held-out business emails) | **0 false escalations**, 0 crashes, 0 flagged by the detector. Spam: 1 of 8,427 escalated |
+| Account takeover (500 phishing_pot emails from a trusted mailbox) | **0% closed** when any compromise signal is present or the signals are unknown (was 75% with signals unknown). A takeover that behaves exactly as usual: 96%, out of scope |
+| InjecAgent (2,108 cases) | Attack success **0.00** under both policies (was 0.048) |
+| ASB (10,200 cases) | Attack success **0.0044** with the attacker's tool registered (was 0.0606); **0.00** without |
+| BIPIA (30,000 poisoned contexts, detector only) | 0% flagged, by design: plain requests with nothing addressed to an AI |
+| Real ATT&CK telemetry (OTRF, 117 datasets) | Real response allowed **117/117**; redirected isolation stopped **115/115**; block without evidence stopped **86/86**; close stopped **117/117** |
+| Fraud (AgentDojo banking, 5 attack wordings) | Attack success **0.00** in every wording, both policies |
+| Fuzzing (5 parsers, 15,000 mutated inputs) | **0 failures**, slowest input 0.70 s (was 1 ingest-blocking crash) |
+| Bandit, pip-audit, Schemathesis | No high-severity finding, no known vulnerability, no server error in 300 requests per operation |
+| Audit tampering | All six tampering cases caught with the SIEM export (two were invisible without it) |
+| OWASP LLM Top 10 + Agentic threats | 20 covered, 4 partial, 2 not applicable, each tied to a test |
+| Explanation accuracy | The escalation reason names the real cause in **14/14** cases (was 11/14) |
 
 ## 5. Legitimate mail (Enron-Spam)
 
@@ -270,7 +281,20 @@ email's content alone**: the detector, hidden-content flags, decoded blobs. The 
 in two by message ID; the false alarms below were found on one half, and the other half was
 not looked at until the fixes were done.
 
-<!-- r2:benign -->
+Held-out half, on the final code (`eval/results/benign.json`; the same numbers on two machines):
+
+| | Legitimate mail (ham) | Spam |
+|---|---|---|
+| Emails | 8,245 | 8,427 |
+| Crashed at ingest | 0 | 0 |
+| Detector flagged (text aimed at an AI) | 0% | 0% |
+| Tagged AI-evasion attempt | 0% | 0.01% (1) |
+| Tagged hidden content | 0% | 0.14% (12) |
+| **Close escalated to a human** | **0%** | 0.01% (1, policy) |
+
+The detector rules that fired at all, never enough on their own to flag an email:
+`structure.end_of_words` (14), `override.you_must_now` (7), `persona.role_prefix` (3),
+`override.ignore_previous` (1).
 
 **What broke, and the fixes:**
 
@@ -391,7 +415,18 @@ amount must come from the user's request either way.
 
 ## 10. TrustGate's own code: fuzzing, scanners, API
 
-<!-- r2:fuzz -->
+**Fuzzing** (`eval/results/fuzz.json`): 3,000 mutated inputs per target, seeded with 200 real
+phishing_pot emails, a 5-second limit per input. Final code:
+
+| Target | Contract | Failures | Slowest input |
+|---|---|---|---|
+| split (whole email) | Always returns an alert | 0 | 0.70 s |
+| sanitise (text and HTML decoder) | Never raises | 0 | 0.24 s |
+| attachment (PDF, DOCX, XLSX, PPTX, image) | Fails closed, never raises | 0 | 0.31 s |
+| auth (Authentication-Results headers) | Never raises | 0 | 0.00 s |
+| outbound (leak and evidence checks) | Never raises | 0 | 0.67 s |
+
+Before the fix, the attachment target had one failure (the forged zip header below).
 
 | Tool | Found | Fix |
 |---|---|---|

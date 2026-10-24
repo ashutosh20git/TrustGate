@@ -58,7 +58,7 @@ python -m spacy download en_core_web_lg
 # OPA binary (needed for the gate): downloaded to .tools/ during the build, or:
 #   curl -L -o .tools/opa.exe https://github.com/open-policy-agent/opa/releases/latest/download/opa_windows_amd64.exe
 
-pytest                                   # 168 tests, each mapped to a silent-failure fix or feature
+pytest                                   # 217 tests, each mapped to a silent-failure fix or feature
 python -m eval.run --configs A,B,C,D     # attack suite A-D + the gate-only-catches headline
 python scripts/seed_demo.py --local      # show the poisoned email being split and flagged
 ```
@@ -430,7 +430,7 @@ TrustGate/
 ├── examples/email_assistant.py    # second agent protected in a few lines
 ├── eval/                          # payloads, inject, build_attachments, generate_alerts, configs, sim, metrics, run
 ├── scripts/                       # init_secrets, seed_demo, train_recheck, check_model_pins, ci_eval_guard
-├── tests/                         # 157 tests, each mapped to a silent-failure fix or feature
+├── tests/                         # 217 tests, each mapped to a silent-failure fix or feature
 ├── .tools/opa.exe                 # OPA binary (git-ignored)
 ├── DISCLOSURE.md · PLACEHOLDERS.md · README.md
 ```

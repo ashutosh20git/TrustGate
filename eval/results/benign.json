@@ -1,0 +1,31 @@
+{
+  "corpus": "Enron-Spam (Metsis et al. 2006), subject + body",
+  "split": "test",
+  "facts": "known, well-behaved sender (the facts allow the close)",
+  "ham": {
+    "emails": 8245,
+    "crashed": 0,
+    "detector_flagged": 0.0,
+    "ai_evasion_tagged": 0.0,
+    "hidden_content": 0.0,
+    "close_escalated": 0.0
+  },
+  "spam": {
+    "emails": 8427,
+    "crashed": 0,
+    "detector_flagged": 0.0,
+    "ai_evasion_tagged": 0.0001,
+    "hidden_content": 0.0014,
+    "close_escalated": 0.0001
+  },
+  "escalation_reasons": {
+    "policy": 1
+  },
+  "detector_rules": {
+    "structure.end_of_words": 14,
+    "override.you_must_now": 7,
+    "persona.role_prefix": 3,
+    "override.ignore_previous": 1
+  },
+  "ham_escalation_examples": []
+}
