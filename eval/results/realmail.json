@@ -9,7 +9,7 @@
     "fail": 1624,
     "unknown": 8250
   },
-  "detector_flagged_ai_directed_text": 0.0029,
+  "detector_flagged_ai_directed_text": 0.0024,
   "false_benign_rate": {
     "scorecard": 0.0,
     "model": 0.0,
