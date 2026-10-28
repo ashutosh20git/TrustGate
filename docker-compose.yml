@@ -165,18 +165,19 @@ services:
       redis: {condition: service_healthy}
       opa: {condition: service_started}
 
+  # The analyst dashboard (Next.js, dashboard/). It reads and decides only through the
+  # proxy's analyst API, so it needs no database access and holds no secrets of its own.
   dashboard:
-    <<: *service
-    env_file: []
-    command: ["streamlit", "run", "services/dashboard/app.py", "--server.port=8501", "--server.address=0.0.0.0",
-              "--server.headless=true", "--browser.gatherUsageStats=false"]
+    image: ${TRUSTGATE_DASHBOARD_IMAGE:-ghcr.io/ashutosh20git/trustgate-dashboard:latest}
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp, /app/.next/cache]
     environment:
-      DATABASE_URL: *db-url
       TRUSTGATE_PROXY_URL: http://trustgate-proxy:8080
-    networks: [analyst-net, core-net]
-    ports: ["${TRUSTGATE_BIND_ADDR:-127.0.0.1}:8501:8501"]
+    networks: [analyst-net]
+    ports: ["${TRUSTGATE_BIND_ADDR:-127.0.0.1}:8501:3000"]
     depends_on:
-      postgres: {condition: service_healthy}
+      trustgate-proxy: {condition: service_started}
 
   # The agent reaches only the proxy and the LLM API (agent-net). It holds no
   # tool credentials. One-shot: `docker compose run --rm agent --alert-id E-0001`.

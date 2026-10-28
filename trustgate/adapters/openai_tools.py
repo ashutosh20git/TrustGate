@@ -12,7 +12,7 @@ import json
 from typing import Any
 
 from trustgate.adapters._schema import args_model
-from trustgate.gate import ESCALATED_MESSAGE, ActionEscalated, Gate
+from trustgate.gate import ESCALATED_MESSAGE, ActionEscalated, Gate, refusal_message
 
 
 def tool_schemas(gate: Gate, names: list[str] | None = None) -> list[dict[str, Any]]:
@@ -44,6 +44,6 @@ def dispatch(gate: Gate, tool_call: Any) -> str:
         return ESCALATED_MESSAGE + " (unknown tool)"
     try:
         result = gate.call(name, **kwargs)
-    except ActionEscalated:
-        return ESCALATED_MESSAGE
+    except ActionEscalated as exc:
+        return refusal_message(exc.decision)
     return json.dumps(result, default=str)

@@ -41,7 +41,7 @@ from pydantic import ValidationError
 from trustgate import __version__
 from trustgate.config import Settings
 from trustgate.detector import Detector
-from trustgate.gate import ESCALATED_MESSAGE, RESERVED_ARGS, Gate, ToolConfigError
+from trustgate.gate import ESCALATED_MESSAGE, RESERVED_ARGS, Gate, ToolConfigError, refusal_message
 from trustgate.mcp.pinning import ToolPinRegistry
 from trustgate.models import IOCSignal, ProposedAction
 from trustgate.render import render_untrusted_result
@@ -153,7 +153,8 @@ class Gateway:
         decision = await asyncio.to_thread(self.gate.decide, action, None,
                                            mcp={"server": self.server_name, "pinned_ok": pinned_ok})
         if not decision.permits_execution:
-            return _error(f"{ESCALATED_MESSAGE} Escalation: {decision.escalation_id or 'n/a'}")
+            return _error(f"{refusal_message(decision)} Escalation: {decision.escalation_id or 'n/a'}"
+                          if decision.escalation_id else refusal_message(decision))
         call_args = decision.redacted_args if decision.enforced and decision.redacted_args is not None else arguments
         result = await self.upstream.call_tool(name, call_args)
         await asyncio.to_thread(self.gate.store.audit, "execution", alert_id=action.alert_id, tool=action.tool,

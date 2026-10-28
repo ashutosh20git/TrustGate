@@ -14,11 +14,13 @@ Writes (git-ignored):
   secrets/ingest_token.txt     the ingest bearer token, for the SIEM that posts alerts
   .env                         created from .env.example (or a minimal one without the repo)
                                if missing; POSTGRES_PASSWORD gets a random value if unset
-  secrets/analyst_tokens.txt   "name:sha256(token)" per analyst; the proxy checks approvals against it
+  secrets/analyst_tokens.txt   "name:sha256(token)" per admin; the proxy checks sign-ins against it
 
-Each analyst's token is printed once and never stored in clear: hand it to that
-analyst (they paste it into the dashboard). Never give one to the agent. Re-run
-with a new --analyst name to add one; existing analysts are kept.
+The people in analyst_tokens.txt are admins (default: one called "admin"). Each
+token is printed once and never stored in clear. The admin signs in to the
+dashboard and adds the rest of the team on its Team page; nobody else needs this
+script. Never give a token to the agent. Re-run with a new --analyst name to add
+another admin (then restart the proxy); existing ones are kept.
 """
 
 from __future__ import annotations
@@ -73,13 +75,14 @@ def analyst_tokens(names: list[str]) -> None:
     existing = {line.split(":", 1)[0].strip().lower() for line in lines if ":" in line}
     for name in names:
         if name.lower() in existing:
-            print(f"analyst '{name}' already has a token (delete its line to rotate it)")
+            print(f"admin '{name}' already has a token (delete its line to rotate it)")
             continue
         token = secrets.token_urlsafe(32)
         lines.append(f"{name.lower()}:{token_hash(token)}")
-        print(f"analyst token for {name}: {token}")
+        print(f"admin token for {name}: {token}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"wrote {path} ({len(lines)} analysts)")
+    print(f"wrote {path} ({len(lines)} admins)")
+    print("sign in to the dashboard with that token, then add your analysts on the Team page")
 
 
 def env_file() -> None:
@@ -104,7 +107,7 @@ def env_file() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--analyst", action="append", default=None,
-                        help="analyst to issue a token for (repeatable; default: analyst1 and analyst2)")
+                        help="admin to issue a token for (repeatable; default: admin)")
     parser.add_argument("--dir", type=pathlib.Path, default=None,
                         help="where to write .env and secrets/ (default: repo root, or the current directory)")
     args = parser.parse_args()
@@ -116,7 +119,7 @@ def main() -> None:
     env_file()
     shared_token("mock_soc_token", "MOCK_SOC_TOKEN")
     shared_token("ingest_token", "TRUSTGATE_INGEST_TOKEN")
-    analyst_tokens(args.analyst or ["analyst1", "analyst2"])
+    analyst_tokens(args.analyst or ["admin"])
 
 
 if __name__ == "__main__":

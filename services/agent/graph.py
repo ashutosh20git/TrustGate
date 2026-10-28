@@ -30,10 +30,22 @@ ACTIONS = (
     ("block_ip", 2), ("isolate_host", 2), ("disable_account", 2),
     ("send_email", 3), ("post_webhook", 3),
 )
+# Each action's args (alert_id is filled in for you). Must match services/soc_tools.py: a test checks.
+ACTION_ARGS: dict[str, tuple[str, ...]] = {
+    "escalate": ("reason",), "add_note": ("text",), "raise_severity": ("severity",),
+    "close_alert": ("reason",), "downgrade_severity": ("severity",),
+    "whitelist_indicator": ("indicator", "reason", "ttl_hours"), "suppress_rule": ("rule", "reason", "ttl_hours"),
+    "block_ip": ("ip",), "isolate_host": ("host",), "disable_account": ("account",),
+    "send_email": ("to", "subject", "body"), "post_webhook": ("url", "payload"),
+}
+_ARG_HINTS = {"severity": "low|medium|high|critical", "ttl_hours": "number, at most 24"}
 MAX_STEPS = 6
 
 # A plain-text LLM prompt built from constants. The file's final newline is not part of the prompt.
-_ACTION_MENU = "".join(f"   - {name} (T{tier})\n" for name, tier in ACTIONS)
+_ACTION_MENU = "".join(
+    f"   - {name} (T{tier}), args: "
+    + ", ".join(f"{a} ({_ARG_HINTS[a]})" if a in _ARG_HINTS else a for a in ACTION_ARGS[name]) + "\n"
+    for name, tier in ACTIONS)
 SYSTEM_PROMPT = (
     (Path(__file__).parent / "prompts" / "system.txt").read_text(encoding="utf-8")
     .removesuffix("\n").replace("{action_menu}", _ACTION_MENU)
@@ -54,13 +66,26 @@ TOOLS: list[dict[str, Any]] = [
             "properties": {
                 "verdict": {"type": "string", "enum": ["malicious", "benign", "unsure"]},
                 "tool": {"type": "string", "enum": [name for name, _ in ACTIONS]},
-                "args": {"type": "object", "description": "Arguments for the action, e.g. {\"ip\": \"203.0.113.9\"}."},
+                "args": {"type": "object", "description": "Exactly the action's args from the menu, e.g. "
+                                                          "{\"severity\": \"high\"} for raise_severity."},
                 "cited_evidence": {"type": "array", "items": {"type": "string"}},
                 "rationale": {"type": "string", "maxLength": 800},
             },
             "required": ["verdict", "tool", "args", "cited_evidence", "rationale"],
         }}},
 ]
+
+
+def args_problem(tool: str, args: dict[str, Any]) -> str | None:
+    """What is wrong with an action's args against ACTION_ARGS, or None. alert_id is always accepted."""
+    expected = ACTION_ARGS.get(tool)
+    if expected is None:
+        return None  # the tool enum is checked by ProposedAction and the gate
+    missing = [a for a in expected if a not in args]
+    unexpected = sorted(set(args) - set(expected) - {"alert_id"})
+    parts = ([f"missing: {', '.join(missing)}"] if missing else []) + \
+            ([f"not allowed: {', '.join(unexpected)}"] if unexpected else [])
+    return "; ".join(parts) or None
 
 
 class AgentState(TypedDict, total=False):
@@ -133,12 +158,15 @@ def build_graph(tools: ToolsClient, settings: Settings | None = None, *, complet
     def validate(state: AgentState) -> AgentState:
         try:
             action = ProposedAction(alert_id=state["alert_id"], **state["proposal"])
-            return {"action": action.model_dump(mode="json")}
+            problem = args_problem(action.tool, action.args)
+            if problem is None:
+                return {"action": action.model_dump(mode="json")}
+            feedback = f"Your proposed action had the wrong args ({problem})."
         except (ValidationError, TypeError) as exc:
-            messages = list(state["messages"]) + [{"role": "user", "content":
-                f"Your proposed action was invalid ({type(exc).__name__}). Call propose_action again."}]
-            return {"action": None, "proposal": None, "messages": messages,
-                    "invalid_attempts": state.get("invalid_attempts", 0) + 1}
+            feedback = f"Your proposed action was invalid ({type(exc).__name__})."
+        messages = list(state["messages"]) + [{"role": "user", "content": f"{feedback} Call propose_action again."}]
+        return {"action": None, "proposal": None, "messages": messages,
+                "invalid_attempts": state.get("invalid_attempts", 0) + 1}
 
     def after_validate(state: AgentState) -> str:
         if state.get("action"):

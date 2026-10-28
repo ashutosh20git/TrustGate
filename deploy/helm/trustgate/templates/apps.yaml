@@ -16,10 +16,6 @@ One Deployment + Service per TrustGate component, all from the same image.
   (dict "name" "detector" "enabled" .Values.detector.enabled "replicas" .Values.detector.replicas "port" 8082 "probe" "/healthz"
         "resources" .Values.detector.resources "secrets" (list) "packs" false
         "command" (list "uvicorn" "services.detector.main:create_app" "--factory" "--host" "0.0.0.0" "--port" "8082"))
-  (dict "name" "dashboard" "enabled" .Values.dashboard.enabled "replicas" 1 "port" 8501 "probe" "/_stcore/health"
-        "resources" .Values.dashboard.resources "secrets" (list) "packs" false
-        "command" (list "streamlit" "run" "services/dashboard/app.py" "--server.port=8501" "--server.address=0.0.0.0"
-                        "--server.headless=true" "--browser.gatherUsageStats=false"))
   (dict "name" "mock-soc" "enabled" .Values.mockSoc.enabled "replicas" 1 "port" 8090 "probe" ""
         "resources" (dict) "secrets" (list "mock_soc_token") "packs" false
         "command" (list "uvicorn" "services.mock_soc.main:create_app" "--factory" "--host" "0.0.0.0" "--port" "8090"))

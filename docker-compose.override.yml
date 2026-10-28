@@ -14,5 +14,7 @@ services:
   detector: *build
   ingest: *build
   trustgate-proxy: *build
-  dashboard: *build
+  dashboard:
+    build:
+      context: dashboard
   agent: *build

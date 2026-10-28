@@ -202,7 +202,7 @@ def _nist_au(ev: dict[str, Any]) -> list[dict[str, Any]]:
          "status": "met", "evidence": "Each record holds kind, UTC time, alert, tool, tier, decision, mode, "
                                       "reasons, re-check verdict and, for analyst decisions, the analyst."},
         {"id": "AU-6", "requirement": "Audit record review, analysis and reporting", "status": "confirm",
-         "evidence": "The dashboard's Audit tab, /v1/audit and the SIEM export support review; confirm a "
+         "evidence": "The dashboard's Activity log, /v1/audit and the SIEM export support review; confirm a "
                      "review schedule."},
         {"id": "AU-9", "requirement": "Protection of audit information",
          "status": "gap" if chain is False or export is False else "met" if export else "confirm",

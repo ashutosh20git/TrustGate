@@ -2,7 +2,7 @@
 {{- $fn := include "trustgate.fullname" . -}}
 {{- /* backend component -> components allowed to reach it (Compose core-net) */ -}}
 {{- $backends := dict
-  "postgres" (list "proxy" "ingest" "dashboard" "mock-soc")
+  "postgres" (list "proxy" "ingest" "mock-soc")
   "redis"    (list "proxy")
   "opa"      (list "proxy")
   "detector" (list "ingest")

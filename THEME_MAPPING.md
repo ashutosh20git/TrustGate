@@ -59,7 +59,7 @@ Fit: 🟢 core of the project · 🟡 real supporting features · 🔴 thin; don
 | 2 | **Tiered response actions.** T0 read, T1 close/whitelist/suppress, T2 block_ip/isolate_host/disable_account, T3 send_email/webhook | `tiers.py` |
 | 3 | **Disruptive-action checks.** The target must be in the typed facts with its own evidence against it, and must not be a critical asset | `gate.py`, `packs/soc.*` |
 | 4 | **Schema-constrained verdicts.** Each one has an audit record | `models.py` |
-| 5 | **Analyst dashboard (Streamlit).** Approve, reject or undo escalations | `services/dashboard` |
+| 5 | **Analyst dashboard (Next.js + shadcn/ui).** Approve, reject or undo escalations; every step per alert | `dashboard/` |
 | 6 | **Action ledger + rollback.** One-click undo, and automatic rollback when an injection is found later | `store.py`, `gate.py` |
 | 7 | **Counterfactual explanations.** For example, "would be allowed if `facts.dmarc_pass` were True"; they name the real cause in 14/14 cases | `counterfactual.py` |
 | 8 | **Monitor mode + rollout report.** Logs "would block" without blocking; `GET /v1/rollout` shows when enforcing is safe | `gate.py`, proxy |

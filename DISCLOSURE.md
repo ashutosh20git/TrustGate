@@ -49,7 +49,7 @@ organisers' confirmation (issue `tg-e5d`).
 | Model Context Protocol SDK (`mcp`) | MCP gateway and the mock-SOC MCP server |
 | LangGraph, langchain-core | SOC agent graph and tool adapter |
 | LiteLLM | Model-agnostic LLM calls (agent, attacker) |
-| Streamlit, Plotly, pandas, numpy | Dashboard and metrics |
+| Next.js, React, shadcn/ui, Radix UI, Tailwind CSS, SWR, Recharts, lucide-react, sonner, next-themes | Analyst dashboard |
 | OpenCV (opencv-python-headless), Pillow | QR-code decoding and image handling in attachments (Part 2) |
 | pytesseract + Tesseract OCR (binary) | Text in image attachments (Part 2) |
 | segno | QR codes generated for tests |

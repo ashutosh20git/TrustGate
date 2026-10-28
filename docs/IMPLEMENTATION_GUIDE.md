@@ -189,7 +189,7 @@ services/                  the deployable services
   mock_soc/                stand-in SOC tools (HTTP and MCP) + client
   soc_tools.py             binds tool names to a SOC client
   agent/                   the LangGraph triage agent
-  dashboard/app.py         analyst UI (Streamlit)
+dashboard/                 analyst UI (Next.js + shadcn/ui), its own image
 packs/                     policy packs: floor.rego/json, soc.rego/json, generic.rego/json, tests
 eval/                      attack suite, configs A-D, simulator, metrics
 scripts/                   init_secrets, seed_demo, train_recheck, ci_eval_guard, ...
@@ -1164,16 +1164,23 @@ CI).
 | Method and path | Auth | Purpose |
 |---|---|---|
 | `POST /v1/tools/{tool}` | none (agent) | Decide, and execute if permitted. Returns the outcome only |
-| `GET /v1/escalations?status=open` | analyst | The queue (canaries mixed in, shuffled) |
+| `GET /v1/escalations?status=open\|decided\|all&alert_id=` | analyst | The queue (canaries mixed in, in a keyed-hash order; `X-Total-Count`), or past decisions newest first |
 | `POST /v1/escalations/{id}/approve` or `/reject` | analyst (+ `X-Second-Analyst-Token` for T2/T3) | Resolve; 409 refused, 502 executor failed |
 | `GET /v1/escalations/{id}/explain` | analyst | Counterfactual explanation |
 | `GET /v1/actions`, `POST /v1/actions/{id}/revert` | analyst | Ledger and undo |
 | `GET /v1/analysts` | analyst | Trust scores |
-| `GET /v1/audit`, `GET /v1/alerts/{id}` | analyst | Audit trail, labelled alert |
+| `GET /v1/audit?alert_id=&kind=&newest=` | analyst | Audit trail in chain order |
+| `GET /v1/alerts?status=waiting\|handled\|new&q=`, `GET /v1/alert-counts`, `GET /v1/alerts/{id}` | analyst | Alert list with review status, filter counts, labelled alert |
+| `GET /v1/me`, `GET`/`POST /v1/team`, `POST /v1/team/{name}/token` or `/remove` | analyst / admin | Who is signed in; team management (admins only) |
 | `GET /v1/metrics`, `GET /v1/rollout` | analyst | Metrics, monitor readiness |
 | `GET /v1/compliance/{framework}` | analyst | Evidence pack |
 | `GET /v1/mcp/pins`, `POST /v1/mcp/pins/{server}/{tool}/approve` | analyst | Pins, re-pin |
 | `GET /healthz` | none | 503 while the gate fails closed (OPA or Redis down, saturated) |
+
+The lists (`/v1/alerts`, `/v1/escalations`, `/v1/actions`, `/v1/audit`) are cursor-paged
+(`trustgate/paging.py`): pass `limit`, and send the `X-Next-Cursor` response header back as
+`cursor` for the next page; the header is absent on the last page. Each page starts after the
+previous page's last sort key, so rows arriving meanwhile are never repeated or skipped.
 
 The SOC connector is loaded from `TRUSTGATE_SOC_CLIENT` (`module:Class`, default the mock SOC)
 as `Class(MOCK_SOC_URL, mock_soc_token)`. A connector that cannot start leaves decisions
@@ -1197,12 +1204,18 @@ local outbox) in a database, with reverse endpoints and seeded log lines. Every 
 the mock SOC token. `client.py` is the HTTP client, and the interface a real connector
 implements. `mcp_server.py` exposes the same tools over MCP for the gateway.
 
-### 17.5 Dashboard (`services/dashboard/app.py`, port 8501)
+### 17.5 Dashboard (`dashboard/`, port 8501)
 
-Streamlit. The analyst pastes their token in the sidebar. Tabs: **Escalation queue** (reasons,
-tainted spans, explanation, approve/reject with optional second token), **Actions & rollback**,
-**Analysts**, **Metrics** (decision chart, rollout readiness, an uploader for eval
-`summary.json`), **Audit**, **MCP pins**, **Compliance** (with JSON download).
+Next.js 16 with shadcn/ui, built as its own image (`dashboard/Dockerfile`). The analyst signs in
+with their token; a route handler checks it against the proxy and keeps it in an httpOnly,
+SameSite=Strict cookie, so page scripts never see it. The browser only talks to the dashboard's
+own `/api/tg/...` route, which forwards an allow-list of analyst reads and decisions to the proxy
+(never `/v1/tools/...`) and needs an `x-tg-request` header on writes. Pages refresh every 10 s:
+**Overview**, **Alerts** (each alert's every step, trusted facts and quarantined content),
+**Review queue** (plain-language reasons, what would let it run, approve/reject with a reason and,
+for T2/T3, a second analyst's token), **Actions taken** (one-click undo), **Activity log**
+(filters, raw record, JSON download), **Insights** (rollout readiness, analyst scores) and
+**Compliance & tools** (evidence packs, MCP tool re-approval).
 
 ---
 

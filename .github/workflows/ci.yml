@@ -60,6 +60,23 @@ jobs:
           pip install ".[bench]"
           python -m eval.agentdojo_bench --suites banking --check --out /tmp/agentdojo.json
 
+  dashboard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npx eslint .
+      - run: npm run build
+
   deploy:
     runs-on: ubuntu-latest
     steps:

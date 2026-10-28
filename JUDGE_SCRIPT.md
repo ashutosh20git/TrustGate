@@ -242,7 +242,7 @@ Total length is about **15–18 minutes** with the demo, plus Q&A. If you only g
 > - **Pluggable SOC connector**, so you swap the mock SOC for a real one with one environment variable.
 > - **Horizontal scaling:** multiple proxy replicas share one audit chain through a Postgres advisory lock. We found a chain-fork bug when scaling and fixed it.
 >
-> The stack: Python 3.11, FastAPI, Pydantic, SQLModel, OPA, Redis, Postgres, XGBoost, Presidio, Streamlit, LangGraph and LiteLLM."
+> The stack: Python 3.11, FastAPI, Pydantic, SQLModel, OPA, Redis, Postgres, XGBoost, Presidio, LangGraph and LiteLLM, with a Next.js and shadcn/ui dashboard."
 
 ---
 

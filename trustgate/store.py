@@ -17,11 +17,12 @@ from typing import Any
 
 import httpx
 import structlog
-from sqlalchemy import JSON, Column, Text, text
+from sqlalchemy import JSON, Column, Text, and_, func, or_, text
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 from trustgate.config import Settings
 from trustgate.models import Alert, GateDecision, ProposedAction
+from trustgate.paging import as_utc
 
 _AUDIT_CHAIN_LOCK = 0x7472757374  # pg advisory lock key for the audit hash chain
 
@@ -43,6 +44,22 @@ def _utc_iso(value: dt.datetime | None) -> str | None:
 
 def _id() -> str:
     return uuid.uuid4().hex[:16]
+
+
+def _before(time_col, id_col, key: tuple[Any, Any] | None):
+    """Keyset condition for newest-first pages: rows strictly after `key` in (time, id) desc order."""
+    if key is None:
+        return None
+    ts, ident = key
+    return or_(time_col < ts, and_(time_col == ts, id_col < ident))
+
+
+def _page(rows: list, limit: int, key) -> tuple[list, Any]:
+    """Trim the one extra row fetched to learn whether another page exists."""
+    if len(rows) <= limit:
+        return rows, None
+    rows = rows[:limit]
+    return rows, key(rows[-1])
 
 
 class AlertRecord(SQLModel, table=True):
@@ -126,6 +143,20 @@ class ActionRecord(SQLModel, table=True):
     revert_reason: str | None = None
 
 
+class TeamMember(SQLModel, table=True):
+    """Someone an admin added in the dashboard. Only the token's SHA-256 is kept; a
+    removed member keeps the row (removed_at set) so the history still has a name."""
+
+    name: str = Field(primary_key=True)
+    token_sha256: str = Field(index=True, unique=True)
+    role: str = "analyst"  # analyst, admin
+    added_at: dt.datetime = Field(default_factory=_now)
+    added_by: str = ""
+    token_reset_at: dt.datetime | None = None
+    removed_at: dt.datetime | None = Field(default=None, index=True)
+    removed_by: str | None = None
+
+
 class ToolResponseShape(SQLModel, table=True):
     """Baseline shape of an MCP tool's successful responses (content types, structured keys)."""
 
@@ -161,10 +192,67 @@ class Store:
             rec = s.get(AlertRecord, alert_id)
             return Alert.model_validate_json(rec.payload) if rec else None
 
+    def alert_received(self, alert_id: str) -> dt.datetime | None:
+        with self.session() as s:
+            rec = s.get(AlertRecord, alert_id)
+            return rec.created_at if rec else None
+
     def list_alerts(self, limit: int = 100) -> list[Alert]:
         with self.session() as s:
             rows = s.exec(select(AlertRecord).order_by(AlertRecord.created_at.desc()).limit(limit)).all()
             return [Alert.model_validate_json(r.payload) for r in rows]
+
+    def alert_page(self, *, limit: int = 50, after: tuple[dt.datetime, str] | None = None,
+                   status: str | None = None, query: str | None = None
+                   ) -> tuple[list[tuple[Alert, dt.datetime, str]], tuple[dt.datetime, str] | None]:
+        """Newest alerts first, a page at a time, each with its review status.
+
+        Status: "waiting" (an action is held for an analyst), "handled" (the gate has
+        decided on it and nothing is held) or "new" (the agent has not acted yet).
+        """
+        waiting = select(Escalation.alert_id).where(Escalation.status == "open")
+        decided = select(AuditRecord.alert_id).where(AuditRecord.kind == "decision",
+                                                     AuditRecord.alert_id.is_not(None))
+        with self.session() as s:
+            q = select(AlertRecord).order_by(AlertRecord.created_at.desc(), AlertRecord.alert_id.desc())
+            if (cond := _before(AlertRecord.created_at, AlertRecord.alert_id, after)) is not None:
+                q = q.where(cond)
+            if query:
+                q = q.where(func.lower(AlertRecord.alert_id).contains(query.lower(), autoescape=True))
+            if status == "waiting":
+                q = q.where(AlertRecord.alert_id.in_(waiting))
+            elif status == "handled":
+                q = q.where(AlertRecord.alert_id.in_(decided), AlertRecord.alert_id.not_in(waiting))
+            elif status == "new":
+                q = q.where(AlertRecord.alert_id.not_in(decided), AlertRecord.alert_id.not_in(waiting))
+            rows, nxt = _page(list(s.exec(q.limit(limit + 1)).all()), limit,
+                              lambda r: (as_utc(r.created_at), r.alert_id))
+            states = self.alert_states([r.alert_id for r in rows])
+            return [(Alert.model_validate_json(r.payload), r.created_at, states[r.alert_id]) for r in rows], nxt
+
+    def alert_states(self, alert_ids: list[str]) -> dict[str, str]:
+        """Review status per alert: waiting, handled or new (see alert_page)."""
+        if not alert_ids:
+            return {}
+        with self.session() as s:
+            waiting = set(s.exec(select(Escalation.alert_id).where(
+                Escalation.status == "open", Escalation.alert_id.in_(alert_ids))).all())
+            decided = set(s.exec(select(AuditRecord.alert_id).where(
+                AuditRecord.kind == "decision", AuditRecord.alert_id.in_(alert_ids))).all())
+        return {a: "waiting" if a in waiting else "handled" if a in decided else "new" for a in alert_ids}
+
+    def alert_counts(self) -> dict[str, int]:
+        """How many alerts are in each review status (the alert list's filter counts)."""
+        waiting = select(Escalation.alert_id).where(Escalation.status == "open")
+        decided = select(AuditRecord.alert_id).where(AuditRecord.kind == "decision",
+                                                     AuditRecord.alert_id.is_not(None))
+        count = select(func.count()).select_from(AlertRecord)
+        with self.session() as s:
+            total = s.exec(count).one()
+            n_waiting = s.exec(count.where(AlertRecord.alert_id.in_(waiting))).one()
+            n_handled = s.exec(count.where(AlertRecord.alert_id.in_(decided),
+                                           AlertRecord.alert_id.not_in(waiting))).one()
+        return {"all": total, "waiting": n_waiting, "handled": n_handled, "new": total - n_waiting - n_handled}
 
     # --- audit ----------------------------------------------------------------
 
@@ -195,12 +283,29 @@ class Store:
         self._export(rec)
         return rec
 
-    def audit_trail(self, alert_id: str | None = None, limit: int = 500) -> list[AuditRecord]:
+    def audit_trail(self, alert_id: str | None = None, limit: int = 500, *, newest: bool = False) -> list[AuditRecord]:
+        """Records in chain order; newest=True returns the latest `limit` records instead of the first."""
         with self.session() as s:
-            q = select(AuditRecord).order_by(AuditRecord.seq)
+            q = select(AuditRecord).order_by(AuditRecord.seq.desc() if newest else AuditRecord.seq)
             if alert_id:
                 q = q.where(AuditRecord.alert_id == alert_id)
-            return list(s.exec(q.limit(limit)).all())
+            rows = list(s.exec(q.limit(limit)).all())
+            return rows[::-1] if newest else rows
+
+    def audit_page(self, *, alert_id: str | None = None, kind: str | None = None, limit: int = 50,
+                   after: int | None = None, newest: bool = False) -> tuple[list[AuditRecord], int | None]:
+        """A page of the trail. newest=True walks back from the latest record; each page is
+        still returned in chain order. The cursor is the sequence number to continue from."""
+        with self.session() as s:
+            q = select(AuditRecord).order_by(AuditRecord.seq.desc() if newest else AuditRecord.seq)
+            if alert_id:
+                q = q.where(AuditRecord.alert_id == alert_id)
+            if kind:
+                q = q.where(AuditRecord.kind == kind)
+            if after is not None:
+                q = q.where(AuditRecord.seq < after if newest else AuditRecord.seq > after)
+            rows, nxt = _page(list(s.exec(q.limit(limit + 1)).all()), limit, lambda r: r.seq)
+            return (rows[::-1] if newest else rows), nxt
 
     def verify_audit_chain(self) -> bool:
         prev = ""
@@ -276,6 +381,20 @@ class Store:
             if since is not None:
                 q = q.where(ActionRecord.ts >= since)
             return list(s.exec(q.limit(limit)).all())
+
+    def action_page(self, *, alert_id: str | None = None, status: str | None = None, limit: int = 50,
+                    after: tuple[dt.datetime, str] | None = None
+                    ) -> tuple[list[ActionRecord], tuple[dt.datetime, str] | None]:
+        """Executed actions, newest first, a page at a time."""
+        with self.session() as s:
+            q = select(ActionRecord).order_by(ActionRecord.ts.desc(), ActionRecord.id.desc())
+            if alert_id:
+                q = q.where(ActionRecord.alert_id == alert_id)
+            if status:
+                q = q.where(ActionRecord.status == status)
+            if (cond := _before(ActionRecord.ts, ActionRecord.id, after)) is not None:
+                q = q.where(cond)
+            return _page(list(s.exec(q.limit(limit + 1)).all()), limit, lambda r: (as_utc(r.ts), r.id))
 
     def update_action(self, rec: ActionRecord) -> None:
         with self.session() as s:
@@ -409,7 +528,8 @@ class Store:
 
     # --- escalations ----------------------------------------------------------
 
-    def open_escalation(self, action: ProposedAction, decision: GateDecision, *, canary: bool = False) -> Escalation:
+    def open_escalation(self, action: ProposedAction, decision: GateDecision, *, canary: bool = False,
+                        created_at: dt.datetime | None = None) -> Escalation:
         key = hashlib.sha256(json.dumps([action.alert_id, action.tool, action.args], sort_keys=True,
                                         default=str).encode()).hexdigest()[:24]
         with self.session() as s:
@@ -426,16 +546,38 @@ class Store:
                              action=action.model_dump(), reasons=decision.reasons,
                              tainted_spans=decision.tainted_spans, recheck_verdict=decision.recheck_verdict,
                              dedupe_key=key, canary=canary)
+            if created_at is not None:
+                esc.created_at = created_at
             s.add(esc)
             s.commit()
             return esc
 
-    def escalations(self, status: str | None = "open", limit: int = 200) -> list[Escalation]:
+    def escalations(self, status: str | None = "open", limit: int = 200, *,
+                    alert_id: str | None = None) -> list[Escalation]:
         with self.session() as s:
             q = select(Escalation).order_by(Escalation.created_at.desc())
             if status:
                 q = q.where(Escalation.status == status)
+            if alert_id:
+                q = q.where(Escalation.alert_id == alert_id)
             return list(s.exec(q.limit(limit)).all())
+
+    def escalation_page(self, *, status: str | None, alert_id: str | None = None, limit: int = 50,
+                        after: tuple[dt.datetime, str] | None = None
+                        ) -> tuple[list[Escalation], tuple[dt.datetime, str] | None]:
+        """Escalations newest first; status None for all, "decided" for everything not open.
+        The proxy pages the open queue itself, in an order that hides planted canaries."""
+        with self.session() as s:
+            q = select(Escalation).order_by(Escalation.created_at.desc(), Escalation.id.desc())
+            if status == "decided":
+                q = q.where(Escalation.status != "open")
+            elif status:
+                q = q.where(Escalation.status == status)
+            if alert_id:
+                q = q.where(Escalation.alert_id == alert_id)
+            if (cond := _before(Escalation.created_at, Escalation.id, after)) is not None:
+                q = q.where(cond)
+            return _page(list(s.exec(q.limit(limit + 1)).all()), limit, lambda r: (as_utc(r.created_at), r.id))
 
     def get_escalation(self, esc_id: str) -> Escalation | None:
         with self.session() as s:
@@ -455,6 +597,32 @@ class Store:
             s.add(esc)
             s.commit()
             return esc
+
+    # --- team -------------------------------------------------------------------
+
+    def member_by_token_hash(self, digest: str) -> TeamMember | None:
+        """The active member a token hash belongs to (removed members never match)."""
+        with self.session() as s:
+            return s.exec(select(TeamMember).where(TeamMember.token_sha256 == digest.lower(),
+                                                   TeamMember.removed_at.is_(None))).first()
+
+    def get_member(self, name: str) -> TeamMember | None:
+        with self.session() as s:
+            return s.get(TeamMember, name)
+
+    def members(self) -> list[TeamMember]:
+        with self.session() as s:
+            return list(s.exec(select(TeamMember).order_by(TeamMember.added_at)).all())
+
+    def has_members(self) -> bool:
+        with self.session() as s:
+            return s.exec(select(TeamMember.name).where(TeamMember.removed_at.is_(None)).limit(1)).first() is not None
+
+    def put_member(self, member: TeamMember) -> TeamMember:
+        with self.session() as s:
+            s.merge(member)
+            s.commit()
+            return member
 
     # --- MCP tool pins ----------------------------------------------------------
 

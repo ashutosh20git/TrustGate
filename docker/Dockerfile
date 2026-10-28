@@ -36,7 +36,7 @@ RUN python -m venv /opt/venv
 COPY pyproject.toml README.md ./
 COPY trustgate ./trustgate
 RUN set -e; \
-    base="ingest,attachments,images,output-scan,recheck-xgb,mcp,server,agent,dashboard,eval"; \
+    base="ingest,attachments,images,output-scan,recheck-xgb,mcp,server,agent,eval"; \
     if [ "$EXTRAS" = "full" ]; then base="$base,detector"; fi; \
     pip install ".[$base]" && python -m spacy download "$SPACY_MODEL"
 

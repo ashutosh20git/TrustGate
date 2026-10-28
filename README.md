@@ -19,7 +19,7 @@ curl -fsSL https://raw.githubusercontent.com/ashutosh20git/TrustGate/main/script
 docker compose up -d
 ```
 
-The setup script writes `.env` and `secrets/` in this folder and **prints your analyst token once: save it**. The first `up` downloads about 1.5 GB. On Windows (PowerShell), use `curl.exe` instead of `curl`, and `python` if `python3` is not found.
+The setup script writes `.env` and `secrets/` in this folder and **prints your admin token once: save it**. Sign in to the dashboard with it, then add your analysts on the **Team** page (each gets their own token there; nobody else needs a terminal). The first `up` downloads about 1.5 GB. On Windows (PowerShell), use `curl.exe` instead of `curl`, and `python` if `python3` is not found.
 
 **2. Load the demo alerts** (a phishing email with a hidden "close this as benign" note aimed at the AI, plus a few clean alerts)
 
@@ -41,7 +41,7 @@ curl -s -X POST http://127.0.0.1:8080/v1/tools/block_ip -H 'content-type: applic
   -d '{"alert_id":"E-DEMO","verdict":"malicious","tool":"block_ip","args":{"ip":"203.0.113.9"},"cited_evidence":["facts.ioc_ips"]}'
 ```
 
-**4. Act as the analyst:** open **http://127.0.0.1:8501**, paste your token in the sidebar, and approve or reject the escalation in the queue. The *Actions & rollback* tab undoes an executed action in one click; *Audit* shows the hash-chained record of every decision.
+**4. Act as the analyst:** open **http://127.0.0.1:8501**, sign in with your token, and approve or reject the held action in the *Review queue*. *Alerts* shows every step for each alert, *Actions taken* undoes an executed action in one click, and the *Activity log* is the hash-chained record of every decision.
 
 **Stop:** `docker compose down` (add `-v` to delete the data). **Upgrade:** download `docker-compose.yml` again, then `docker compose pull && docker compose up -d`.
 
@@ -53,7 +53,7 @@ To use it for real (your own AI agent, SIEM and SOC tools; monitor mode first; K
 
 ```bash
 python -m venv .venv && . .venv/Scripts/activate     # Windows; use bin/activate on POSIX
-pip install -e ".[ingest,attachments,output-scan,recheck-xgb,mcp,server,agent,dashboard,eval,dev]"
+pip install -e ".[ingest,attachments,output-scan,recheck-xgb,mcp,server,agent,eval,dev]"
 python -m spacy download en_core_web_lg
 # OPA binary (needed for the gate): downloaded to .tools/ during the build, or:
 #   curl -L -o .tools/opa.exe https://github.com/open-policy-agent/opa/releases/latest/download/opa_windows_amd64.exe
@@ -139,7 +139,7 @@ Each was a way for an attack to get through, or for the gate to stop working, wi
 | 7 | `suppress_rule` and `whitelist_indicator` change every future alert, justified by one alert's facts | They need `ttl_hours` in (0, 24]; the mock SOC records `expires_at`. Floor rule: a persistent T1 change needs a bounded expiry | `packs/*.json` `expiring_tools`, `Gate._expiry_scope` |
 | 8 | Rate limits were per tool, so a campaign of individually clean-looking emails was judged one at a time | T1 actions are also limited per sender domain (10 per hour by default). Shared mail providers (gmail.com, outlook.com, ...) are exempt; fresh senders there are caught per address by fix 1 | `packs/*.json` `campaign_rate_limits` |
 | 9 | Notes the agent wrote after reading manipulated evidence were stored as plain text | Agent-written notes on a flagged alert are stored with an untrusted-provenance prefix naming the flagged evidence | `Gate._t0` |
-| 10 | Monitor mode logged "would block" but gave no way to tell when enforcing was safe | Per-tool rollout report: decisions, would-block rate, fail-closed count, top reasons, ready flag (`GET /v1/rollout`, dashboard Metrics tab) | `Store.rollout_report` |
+| 10 | Monitor mode logged "would block" but gave no way to tell when enforcing was safe | Per-tool rollout report: decisions, would-block rate, fail-closed count, top reasons, ready flag (`GET /v1/rollout`, dashboard Insights page) | `Store.rollout_report` |
 
 ### v2.2: three more, found while checking the v2.1 fixes
 
@@ -159,7 +159,7 @@ Tests: `tests/test_silent_failures_v23.py`.
 |---|---|---|---|
 | 14 | Outbound checks ran on the raw text. Zero-width characters or base64 let an agent send evidence or an API key to an allowlisted recipient unseen | Outbound text is checked as decoded (the same normaliser and decoder as ingest). A quote of evidence anywhere in the decoded text escalates; a secret or identifier found only after decoding escalates too, since encoded data cannot be redacted in place. Applies to T3 decisions and to analyst approvals | `trustgate/value_match.py`, `Gate._outbound_scan` |
 | 15 | The evidence check sampled a 40-character window every 20 characters, so a verbatim quote of up to 58 characters could slip between samples; inserted punctuation also hid a quote | Every 40-letter-and-digit window of the evidence is checked, ignoring punctuation and spacing. Payloads over the 200,000-character scan limit escalate instead of being partly scanned | `trustgate/value_match.py`, `Gate._t3` |
-| 16 | The proxy returned the gate's full decision (reasons, re-check verdict, tainted spans) to tool callers, and the escalation queue, audit trail, alerts and metrics were readable without a token from agent-net | Tool callers get only the outcome (`decision`, `tier`, `mode`, `escalation_id`). The analyst views need an analyst token; the dashboard asks for one in the sidebar | `services/proxy/main.py` |
+| 16 | The proxy returned the gate's full decision (reasons, re-check verdict, tainted spans) to tool callers, and the escalation queue, audit trail, alerts and metrics were readable without a token from agent-net | Tool callers get only the outcome (`decision`, `tier`, `mode`, `escalation_id`). The analyst views need an analyst token; the dashboard asks for one at sign-in and keeps it in an httpOnly cookie | `services/proxy/main.py` |
 | 17 | The LLM Guard fallback scanner only redacted; it never named an entity, so floor-blocked items (card numbers, national IDs, keys) could never be blocked when it was in use | A regex pass names secrets and floor-blocked identifiers (with Luhn and Verhoeff checksums for cards and Aadhaar) so the floor blocks them | `trustgate/output_scan.py` |
 
 ### What v2 adds
@@ -249,7 +249,7 @@ Built on top of the gate. Tests: `tests/test_part2_features.py`, `packs/policy_t
 |---|---|---|
 | **No undo for agent actions** | Every executed T1/T2 action is ledgered with its reverse (reopen, unblock, release, re-enable, remove from allowlist). An analyst reverts it in one click; when a later signal shows the alert was manipulated (an injection in a tool result), its security-reducing actions are rolled back automatically. Reverse actions are never agent tools | `Gate.revert`, `Gate.revert_alert`, `GET /v1/actions`, `POST /v1/actions/{id}/revert` |
 | **Single-step judgement** | Sequence policy: one security-reducing action per alert runs automatically; a chain (whitelist, then close, then suppress) needs a human. Enforced in code and in the Rego floor over the action ledger | `packs/floor.json` `sequence`, `packs/floor.rego` |
-| **Rubber-stamped escalations** | Analyst trust scores: approval rate, canaries approved, median decision time; flags with reasons for review | `Store.analyst_scores`, `GET /v1/analysts`, dashboard Analysts tab |
+| **Rubber-stamped escalations** | Analyst trust scores: approval rate, canaries approved, median decision time; flags with reasons for review | `Store.analyst_scores`, `GET /v1/analysts`, dashboard Insights page |
 | **No "why not"** | Counterfactual explanations: the smallest change in typed facts that would let the action run ("would allow if facts.dmarc_pass were True"), and what never runs automatically. Canaries are explained like any item | `trustgate/counterfactual.py`, `GET /v1/escalations/{id}/explain` |
 | **Provenance lost between agents** | Outbound text from a manipulated alert carries a signed provenance stamp; a receiving TrustGate turns it into an IOC (and an AI-evasion tag). Stamps can only raise suspicion; with `TRUSTGATE_PROVENANCE_KEY` shared, signatures are checked | `trustgate/provenance.py`, `Splitter._upstream_provenance` |
 | **Policies not tested against attacks** | Rego unit tests for every floor and pack rule (`opa test packs/`), and the CI eval guard now fails if attack success rises for any attack class or language, not only overall | `packs/policy_test.rego`, `scripts/ci_eval_guard.py` |
@@ -330,7 +330,7 @@ Measured on the build laptop: 11.7 GB RAM, 12 logical CPUs, NVIDIA GeForce RTX 2
 | [ ] Install Ollama natively on Windows (not in Docker) | Facts-only re-check model on the GPU | Keeps the model off Docker's RAM budget |
 | [ ] `ollama pull qwen2.5:3b` (or another small model the team picks) | Re-check model | A 3B model fits the RTX 2050's 4 GB VRAM |
 | [ ] Install Python 3.11 | Running tests outside Docker | Containers use `python:3.11-slim`; the ML stack (LLM Guard in particular) is safest on 3.11. Local Python is 3.13 |
-| [ ] Close heavy apps while the stack runs | RAM headroom | Prompt Guard 2, LLM Guard, the Presidio spaCy model, Postgres, Redis and Streamlit together are tight on 11.7 GB |
+| [ ] Close heavy apps while the stack runs | RAM headroom | Prompt Guard 2, LLM Guard, the Presidio spaCy model, Postgres, Redis and the dashboard together are tight on 11.7 GB |
 | [x] Node.js 22 | promptfoo regression suite | Already installed |
 | [x] Git | Version control | Already installed |
 | [ ] Tesseract OCR | Text in image attachments (built; flagged `ocr_unavailable` without it) | `apt install tesseract-ocr` / Windows installer; CI installs it |
@@ -424,8 +424,8 @@ TrustGate/
 │   ├── proxy/ · ingest/ · detector/   # FastAPI services
 │   ├── agent/                     # LangGraph + LiteLLM SOC agent, tool stubs → proxy
 │   ├── mock_soc/                  # sandbox tools (FastAPI) + MCP server + client
-│   ├── soc_tools.py               # the tool catalogue bound to the gate
-│   └── dashboard/app.py           # Streamlit: escalation queue + metrics
+│   └── soc_tools.py               # the tool catalogue bound to the gate
+├── dashboard/                     # analyst dashboard: Next.js + shadcn/ui, its own image
 ├── packs/                         # soc.{rego,json}, generic.{rego,json}, floor.{rego,json}
 ├── examples/email_assistant.py    # second agent protected in a few lines
 ├── eval/                          # payloads, inject, build_attachments, generate_alerts, configs, sim, metrics, run
@@ -445,9 +445,9 @@ setup, connecting your real SOC tools (`TRUSTGATE_SOC_CLIENT`), going live in mo
 
 ```bash
 python3 scripts/init_secrets.py --analyst alice  # standard library only; creates .env (random
-                                                 # POSTGRES_PASSWORD) and secrets/; prints each analyst token once
+                                                 # POSTGRES_PASSWORD) and secrets/; prints alice's admin token once
 docker compose up -d            # pulls ghcr.io/ashutosh20git/trustgate; --build to build from this checkout
-#   dashboard:  http://127.0.0.1:8501   (paste your analyst token)
+#   dashboard:  http://127.0.0.1:8501   (paste your token; add analysts on the Team page)
 #   proxy:      http://127.0.0.1:8080   (agent tool calls)
 #   ingest:     http://127.0.0.1:8081   (SIEM posts alerts with secrets/ingest_token.txt)
 

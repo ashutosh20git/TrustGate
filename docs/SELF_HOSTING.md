@@ -72,7 +72,8 @@ git clone https://github.com/ashutosh20git/TrustGate.git && cd TrustGate
 python3 scripts/init_secrets.py --analyst alice --analyst bob
 #   creates .env (with a random POSTGRES_PASSWORD) and secrets/:
 #   mock_soc_token, ingest_token (give it to your SIEM), analyst_tokens (hashes only).
-#   Each analyst's token is printed once: hand it to that analyst, never to the agent.
+#   alice and bob are admins. Each token is printed once: keep it, never give it to the agent.
+#   Admins add the rest of the team in the dashboard (Team page), no script needed.
 $EDITOR .env          # TRUSTGATE_MTA_AUTHSERV_ID, threat-intel keys, TRUSTGATE_MODE
 docker compose up -d      # pulls the published image; or: up -d --build
 docker compose ps     # proxy and ingest report (healthy)
@@ -194,7 +195,7 @@ service (Compose).
    FROM ghcr.io/ashutosh20git/trustgate:2.4
    COPY packs /app/packs
    ```
-5. **Watch the rollout report** (dashboard Metrics tab, `GET /v1/rollout`). When a
+5. **Watch the rollout report** (dashboard Insights page, `GET /v1/rollout`). When a
    tool shows enough decisions, no fail-closed errors and would-block reasons you
    agree with, switch to `enforce`.
 6. **Ship the audit trail** to your SIEM (`TRUSTGATE_SIEM_JSONL` or Splunk HEC). The
@@ -212,16 +213,20 @@ service (Compose).
   reports `audit_chain_ok`.
 - **Upgrades:** `git pull && docker compose pull && docker compose up -d`, or
   `helm upgrade` with the new image tag. Pods roll automatically when config or secrets change.
-- **Rotating tokens:** delete an analyst's line in `secrets/analyst_tokens.txt`,
-  re-run `init_secrets.py --analyst <name>`, and redeploy (Compose:
-  `docker compose up -d`; Helm: update the secret).
+- **Team:** admins add, remove and re-issue tokens for analysts on the dashboard's
+  Team page. It works at once, with no restart, and every change is in the audit trail.
+  Members added there live in the database as token hashes.
+- **Rotating tokens:** for team members, use **New token** on the Team page. For the
+  admins in `secrets/analyst_tokens.txt`, delete the line, re-run
+  `init_secrets.py --analyst <name>`, and restart the proxy (Compose:
+  `docker compose restart trustgate-proxy`; Helm: update the secret).
 - **Health:** `GET /healthz` on the proxy returns 503 while the gate fails closed;
   alert on it.
 
 ## Known limits
 
 - One ingest and one dashboard replica in the chart. Ingest is stateless and can
-  scale; the dashboard is a single-user Streamlit app per session.
+  scale; the dashboard is stateless (each analyst's token is in their own cookie) and can scale too.
 - The bundled Postgres and Redis are single instances without backups. Use managed
   services for production.
 - No SSO yet: analysts authenticate with individual bearer tokens.

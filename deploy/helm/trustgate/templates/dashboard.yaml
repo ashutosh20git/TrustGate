@@ -1,0 +1,57 @@
+{{- /*
+The analyst dashboard (Next.js). Its own image; it reaches only the proxy's analyst API
+and keeps each analyst's token in an httpOnly cookie, so it needs no secrets or database.
+*/ -}}
+{{- if .Values.dashboard.enabled }}
+{{- $fn := include "trustgate.fullname" . }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fn }}-dashboard
+  labels: {{- include "trustgate.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.dashboard.service.type }}
+  selector: {{- include "trustgate.selector" (list . "dashboard") | nindent 4 }}
+  ports: [{name: http, port: {{ .Values.dashboard.service.port }}, targetPort: 3000}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fn }}-dashboard
+  labels: {{- include "trustgate.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {{- include "trustgate.selector" (list . "dashboard") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "trustgate.selector" (list . "dashboard") | nindent 8 }}
+    spec:
+      {{- include "trustgate.podSpec" . | nindent 6 }}
+      containers:
+        - name: dashboard
+          image: {{ .Values.dashboard.image.repository }}:{{ .Values.dashboard.image.tag | default .Values.image.tag | default .Chart.AppVersion }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext: {{ toYaml .Values.securityContext | nindent 12 }}
+          env:
+            - {name: TRUSTGATE_PROXY_URL, value: "http://{{ $fn }}-proxy:{{ .Values.proxy.service.port }}"}
+          ports: [{containerPort: 3000}]
+          readinessProbe:
+            httpGet: {path: /login, port: 3000}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: {port: 3000}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          {{- with .Values.dashboard.resources }}
+          resources: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: next-cache, mountPath: /app/.next/cache}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+        - {name: next-cache, emptyDir: {}}
+{{- end }}

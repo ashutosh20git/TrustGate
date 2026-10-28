@@ -71,7 +71,7 @@ Tagline: *"Untrusted text can raise suspicion but never lower it."*
 9. **Policy.** OPA/Rego policy packs and floor rules, plus rate limits (Redis).
 10. **Result.** The action is **allowed** (output-scanned, executed, logged in the ledger) or **escalated** to a human analyst. Every decision is written to a hash-chained audit log.
 
-**The demo:** an email with a hidden "close this as benign" note. If the agent tries `close_alert`, the gate escalates it, because DMARC failed and the URL is malicious. If it tries `block_ip` on the attacker's IP, the gate allows it, because the facts support it. The analyst then approves, rejects or undoes actions in the Streamlit dashboard.
+**The demo:** an email with a hidden "close this as benign" note. If the agent tries `close_alert`, the gate escalates it, because DMARC failed and the URL is malicious. If it tries `block_ip` on the attacker's IP, the gate allows it, because the facts support it. The analyst then approves, rejects or undoes actions in the dashboard.
 
 ---
 
@@ -225,7 +225,7 @@ trustgate/            the library (the engine)
   detector/           heuristics, stitch, prompt_guard, llm_guard_scan, ensemble
   mcp/                pinning + gateway
   adapters/           langgraph, openai_tools
-services/             FastAPI wrappers: proxy (8080), ingest (8081), detector, mock_soc, agent, dashboard (Streamlit 8501)
+services/             FastAPI wrappers: proxy (8080), ingest (8081), detector, mock_soc, agent, and dashboard/ at the repo root (Next.js, 8501)
 packs/                Rego policies + JSON data: soc, generic, floor, policy_test
 eval/                 attack suite + all benchmark runners; results in eval/results/
 scripts/              init_secrets, seed_demo, train_recheck, compliance_report, ci_eval_guard, check_model_pins
@@ -243,7 +243,7 @@ deploy-trustgate.sh   one-shot installer (download compose, secrets, pull, up)
 **Offline (no keys):**
 ```bash
 python -m venv .venv && . .venv/Scripts/activate
-pip install -e ".[ingest,attachments,output-scan,recheck-xgb,mcp,server,agent,dashboard,eval,dev]"
+pip install -e ".[ingest,attachments,output-scan,recheck-xgb,mcp,server,agent,eval,dev]"
 python -m spacy download en_core_web_lg
 pytest
 python -m eval.run --configs A,B,C,D

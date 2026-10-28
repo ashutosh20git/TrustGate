@@ -14,15 +14,15 @@ from typing import Any
 from langchain_core.tools import StructuredTool
 
 from trustgate.adapters._schema import args_model
-from trustgate.gate import ESCALATED_MESSAGE, ActionEscalated, Gate
+from trustgate.gate import ActionEscalated, Gate, refusal_message
 
 
 def _runner(gate: Gate, tool_name: str):
     def run(**kwargs: Any) -> Any:
         try:
             return gate.call(tool_name, **kwargs)
-        except ActionEscalated:
-            return ESCALATED_MESSAGE
+        except ActionEscalated as exc:
+            return refusal_message(exc.decision)
 
     return run
 

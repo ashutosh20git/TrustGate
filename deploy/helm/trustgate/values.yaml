@@ -75,9 +75,14 @@ detector:
   replicas: 1
   resources: {requests: {cpu: 250m, memory: 512Mi}, limits: {memory: 4Gi}}
 
+# The analyst dashboard (Next.js, its own image built from dashboard/). It talks only
+# to the proxy's analyst API and needs no database access.
 dashboard:
   enabled: true
-  resources: {requests: {cpu: 100m, memory: 512Mi}, limits: {memory: 1Gi}}
+  image:
+    repository: ghcr.io/ashutosh20git/trustgate-dashboard
+    tag: ""                      # defaults to image.tag
+  resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 512Mi}}
   service: {type: ClusterIP, port: 8501}
 
 # Stand-in SOC tools for evaluation. Disable once you have connected real tools

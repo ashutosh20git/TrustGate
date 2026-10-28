@@ -52,8 +52,29 @@ tracer = trace.get_tracer("trustgate")
 
 # Fixed text returned to the agent: no evidence content can leak through errors (silent failure 17).
 ESCALATED_MESSAGE = "Action not executed: TrustGate escalated it to a human analyst."
+BLOCKED_MESSAGE = "Action not executed: its arguments do not match the tool. Check the tool's arguments and try again."
+
+
+def refusal_message(decision: GateDecision) -> str:
+    """The fixed text an agent gets for an action that did not run."""
+    return BLOCKED_MESSAGE if decision.decision == "block" else ESCALATED_MESSAGE
 RESERVED_ARGS = ("verdict", "cited_evidence", "rationale")
 _FACT_FIELDS = set(TypedFacts.model_fields)
+
+
+def _argument_problem(fn: Callable[..., Any], args: dict[str, Any]) -> str | None:
+    """Why `args` cannot call `fn`, or None. alert_id is optional: _invoke supplies it."""
+    try:
+        params = inspect.signature(fn).parameters.values()
+    except (TypeError, ValueError):
+        return None  # no inspectable signature (a builtin): leave it to execution
+    named = {p.name: p for p in params if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)}
+    missing = sorted(n for n, p in named.items() if p.default is p.empty and n != "alert_id" and n not in args)
+    takes_any = any(p.kind == p.VAR_KEYWORD for p in params)
+    unexpected = [] if takes_any else sorted(n[:40] for n in set(args) - set(named))
+    parts = ([f"missing: {', '.join(missing)}"] if missing else []) + \
+            ([f"unexpected: {', '.join(unexpected[:5])}"] if unexpected else [])
+    return "; ".join(parts) or None
 
 
 class ActionEscalated(Exception):
@@ -331,7 +352,7 @@ class Gate:
         rec = self.store.audit("decision", alert_id=action.alert_id if action else None,
                                tool=action.tool if action else None, decision=decision, details=details)
         decision.audit_id = rec.id
-        if action is not None and decision.decision != "allow" and decision.enforced:
+        if action is not None and decision.decision == "escalate" and decision.enforced:
             decision.escalation_id = self.store.open_escalation(action, decision).id
         return decision
 
@@ -365,6 +386,15 @@ class Gate:
             raise _Escalate(["unknown tool"]) from None
         state.tier = int(tier)
 
+        # 1b. Schema: the arguments fit the executor. A call that cannot run is never "allowed", and
+        #     is blocked rather than escalated: approving it could not run it either.
+        registered = self.tools.get(action.tool)
+        if registered is not None and registered.fn is not None:
+            problem = _argument_problem(registered.fn, action.args)
+            if problem:
+                return GateDecision(decision="block", tier=int(tier),
+                                    reasons=[f"schema: invalid arguments for {action.tool} ({problem})"])
+
         # 2. Schema: the alert exists and every cited ID exists. Read-only T0 calls
         #    that cite nothing (list alerts, query logs) need no alert.
         if alert is None and action.alert_id:
@@ -380,7 +410,6 @@ class Gate:
         if mcp is not None and not mcp.get("pinned_ok"):
             raise _Escalate(["MCP tool not pinned or changed since pinning"])
 
-        registered = self.tools.get(action.tool)
         decision = GateDecision(decision="allow", tier=int(tier), reasons=[])
         if tier == Tier.ALWAYS_ALLOWED:
             self._t0(action, alert, state, decision)
